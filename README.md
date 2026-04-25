@@ -11,14 +11,15 @@
                                         OoO'                                        OoO' 
 ```
 
-[![Latest version number](https://img.shields.io/github/package-json/version/apkd/RoslynQuery?labelColor=2C3439&label=Version&logo=unity
-)](https://github.com/apkd/RoslynQuery/releases/tag/latest)
 [![MIT License](https://img.shields.io/github/license/apkd/RoslynQuery?style=flat&label=License&logo=listmonk&labelColor=2C3439&color=fff)](https://github.com/apkd/RoslynQuery/blob/master/LICENSE)
-[![Test status badge](https://github.com/apkd/RoslynQuery/actions/workflows/test.yml/badge.svg?branch=master&event=push)](https://github.com/apkd/RoslynQuery/actions/workflows/test.yml)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/apkd/RoslynQuery?authorFilter=apkd&label=Commits&labelColor=2C3439&color=EBFF65&logo=git)](https://github.com/apkd/RoslynQuery/commits/master)
+[![Test status badge](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml/badge.svg?branch=master&event=push)](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml)
+[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/apkd/RoslynQuery?authorFilter=apkd&label=Commits&labelColor=2C3439&color=EBFF65&logo=git)](https://github.com/apkd/RoslynQuery/commits/master)
 [![GitHub last commit](https://img.shields.io/github/last-commit/apkd/RoslynQuery?labelColor=2C3439&color=f97&logoColor=f96&logo=tinder&label=Last%20commit)](https://github.com/apkd/RoslynQuery/commit/HEAD~1)
 
 A local MCP server that exposes IDE-like semantic queries over a C# workspace.
+
+Coding agents these days are remarkably powerful, and often the best way to help them is to *stay out of their way*.
+RoslynQuery implements a small set of versatile commands that fill in the gaps in the text-oriented workflow without polluting the context.
 
 # Installation
 
