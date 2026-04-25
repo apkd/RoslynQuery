@@ -76,11 +76,11 @@ static class IlViewer
             : new() { Success = true, Methods = methods };
     }
 
-    public static ViewIlResponse ViewMetadata(SymbolSearchEntry entry, bool compact, CancellationToken ct)
+    public static ViewIlResponse ViewMetadata(ResolvedSymbol resolved, string? assemblyPath, bool compact, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
-        if (entry.AssemblyPath is not { Length: > 0 } assemblyPath)
+        if (assemblyPath is not { Length: > 0 })
             return new() { Error = "The symbol's metadata assembly path is unavailable, so IL is unavailable." };
 
         try
@@ -89,7 +89,7 @@ static class IlViewer
             using var peReader = new PEReader(stream);
             var reader = peReader.GetMetadataReader();
             var options = new IlFormatOptions(compact);
-            var typeSymbol = entry.Symbol.ContainingType;
+            var typeSymbol = resolved.Symbol.ContainingType;
             if (typeSymbol is null)
                 return new() { Error = "The symbol is not declared on a type." };
 
@@ -97,7 +97,7 @@ static class IlViewer
             if (typeHandle.IsNil)
                 return new() { Error = "The symbol's containing type was not found in metadata." };
 
-            var methods = entry.Symbol switch
+            var methods = resolved.Symbol switch
             {
                 IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
                 IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),

@@ -45,7 +45,7 @@ public sealed class WorkspaceSessionManagerTests
         var indexTask = GetIndexTask(session);
 
         await Assert.That(opened.Success).IsTrue();
-        await Assert.That(indexTask).IsNotNull();
+        await Assert.That(indexTask is not null).IsTrue();
 
         static object GetActiveSession(WorkspaceSessionManager manager)
             => typeof(WorkspaceSessionManager)
@@ -200,6 +200,7 @@ public sealed class WorkspaceSessionManagerTests
             CancellationToken.None);
         var il = await manager.ViewIlAsync("Sample.External.ExternalThing.Compute(int)", CancellationToken.None);
         var stringLength = await manager.DescribeSymbolAsync("string.Length", CancellationToken.None);
+        var nested = await manager.DescribeSymbolAsync("Sample.External.ExternalThing.Nested", CancellationToken.None);
         var sourceFirst = await manager.DescribeSymbolAsync("Consumer", CancellationToken.None);
         var shortExternal = await manager.DescribeSymbolAsync("ExternalThing", CancellationToken.None);
 
@@ -222,6 +223,9 @@ public sealed class WorkspaceSessionManagerTests
         await Assert.That(stringLength.Symbol?.Origin).IsEqualTo("metadata");
         await Assert.That(stringLength.Symbol?.Kind).IsEqualTo("property");
         await Assert.That(stringLength.Symbol?.ValueType).IsEqualTo("int");
+        await Assert.That(nested.Success).IsTrue();
+        await Assert.That(nested.Symbol?.Origin).IsEqualTo("metadata");
+        await Assert.That(nested.Symbol?.Kind).IsEqualTo("class");
         await Assert.That(sourceFirst.Success).IsTrue();
         await Assert.That(sourceFirst.Symbol?.CanonicalSignature).IsEqualTo("Sample.App::Sample.App.Consumer");
         await Assert.That(shortExternal.Success).IsFalse();

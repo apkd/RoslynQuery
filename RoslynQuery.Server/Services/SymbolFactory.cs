@@ -7,22 +7,23 @@ namespace RoslynQuery;
 
 static class SymbolFactory
 {
-    public static SymbolDetail ToDetail(SymbolSearchEntry entry)
+    public static SymbolDetail ToDetail(ResolvedSymbol resolved, WorkspaceSymbolIndex index)
     {
-        var symbol = entry.Symbol;
+        var entry = resolved.Entry;
+        var symbol = resolved.Symbol;
         return new()
         {
-            CanonicalSignature = entry.CanonicalSignature,
+            CanonicalSignature = index.GetCanonicalSignature(entry),
             DisplaySignature = entry.DisplaySignature,
             ShortName = entry.ShortName,
             Kind = entry.Kind,
             TypeKind = entry.TypeKind,
             Origin = entry.Origin,
-            Project = entry.Project,
-            ProjectPath = entry.ProjectPath,
-            AssemblyPath = entry.AssemblyPath,
-            ContainingNamespace = entry.ContainingNamespace,
-            ContainingType = entry.ContainingType,
+            Project = index.GetOwnerName(entry),
+            ProjectPath = index.GetProjectPath(entry),
+            AssemblyPath = index.GetAssemblyPath(entry),
+            ContainingNamespace = SymbolText.GetContainingNamespace(symbol),
+            ContainingType = SymbolText.GetContainingType(symbol),
             Accessibility = SymbolText.GetAccessibility(symbol),
             IsStatic = SymbolText.IsStatic(symbol),
             IsAbstract = SymbolText.IsAbstract(symbol),
@@ -66,7 +67,7 @@ static class SymbolFactory
             Accessors = ToAccessors(symbol),
             Characteristics = GetCharacteristics(symbol),
             ConstantValue = GetConstantValue(symbol),
-            Locations = entry.Locations,
+            Locations = index.GetLocations(resolved),
             Documentation = GetDocumentation(symbol),
         };
     }

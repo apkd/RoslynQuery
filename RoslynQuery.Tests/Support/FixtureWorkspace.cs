@@ -253,6 +253,11 @@ sealed class FixtureWorkspace : IAsyncDisposable
             public string Echo(string value) => value;
 
             public string Name => "external";
+
+            public sealed class Nested
+            {
+                public int Value => 7;
+            }
         }
 
         public sealed class Consumer

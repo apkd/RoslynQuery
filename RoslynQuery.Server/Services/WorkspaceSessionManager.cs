@@ -119,17 +119,18 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = ResolveSymbol(index, symbol);
+            var resolution = await ResolveSymbolAsync(activeSession, index, symbol, kindFilter: null, ct);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
-            var entry = resolution.Entry!;
+            var resolved = resolution.Resolved!.Value;
+            var entry = resolved.Entry;
             var pathStyle = activeSession.PathStyle;
-            var detail = SymbolFactory.ToDetail(entry);
-            var references = await CollectReferencesAsync(activeSession, entry, pathStyle, ct);
-            var related = await CollectRelatedSymbolsAsync(activeSession, index, entry, describeRelations, pathStyle, ct);
-            var overloads = CollectOverloads(index, entry, pathStyle);
-            var diagnostics = await CollectSymbolDiagnosticsAsync(activeSession, entry, pathStyle, ct);
+            var detail = SymbolFactory.ToDetail(resolved, index);
+            var references = await CollectReferencesAsync(activeSession, resolved, pathStyle, ct);
+            var related = await CollectRelatedSymbolsAsync(activeSession, index, resolved, describeRelations, pathStyle, ct);
+            var overloads = CollectOverloads(index, activeSession.Solution, resolved, pathStyle);
+            var diagnostics = await CollectSymbolDiagnosticsAsync(activeSession, index, resolved, pathStyle, ct);
             return new()
             {
                 Success = true,
@@ -138,7 +139,7 @@ public sealed class WorkspaceSessionManager
                 Usages = SummarizeReferences(references),
                 Relations = related,
                 Overloads = overloads,
-                TypeMembers = entry.Symbol is INamedTypeSymbol typeSymbol ? CollectTypeMemberSummary(typeSymbol) : null,
+                TypeMembers = resolved.Symbol is INamedTypeSymbol typeSymbol ? CollectTypeMemberSummary(typeSymbol) : null,
                 Diagnostics = diagnostics,
             };
         }
@@ -157,20 +158,21 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = ResolveSymbol(index, symbol, kindFilter: "type");
+            var resolution = await ResolveSymbolAsync(activeSession, index, symbol, kindFilter: "type", ct);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
-            if (resolution.Entry!.Symbol is not INamedTypeSymbol typeSymbol)
+            var resolved = resolution.Resolved!.Value;
+            if (resolved.Symbol is not INamedTypeSymbol typeSymbol)
                 return new() { Query = symbol, Error = "The resolved symbol is not a type." };
 
             var pathStyle = activeSession.PathStyle;
-            var typeSummary = resolution.Entry.ToSummary();
-            var members = CollectTypeMembers(index, typeSymbol, includeInherited)
+            var typeSummary = index.ToSummary(resolved);
+            var members = CollectTypeMembers(index, activeSession.Solution, typeSymbol, includeInherited)
                 .AsValueEnumerable()
                 .Select(item =>
                 {
-                    var summary = item.ToSummary();
+                    var summary = index.ToSummary(item);
                     return ApplyPathStyle(in summary, pathStyle);
                 })
                 .ToArray();
@@ -198,12 +200,13 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = ResolveSymbol(index, symbol);
+            var resolution = await ResolveSymbolAsync(activeSession, index, symbol, kindFilter: null, ct);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
-            var references = await CollectReferencesAsync(activeSession, resolution.Entry!, activeSession.PathStyle, ct);
-            var symbolSummary = resolution.Entry!.ToSummary();
+            var resolved = resolution.Resolved!.Value;
+            var references = await CollectReferencesAsync(activeSession, resolved, activeSession.PathStyle, ct);
+            var symbolSummary = index.ToSummary(resolved);
             return new()
             {
                 Success = true,
@@ -227,12 +230,13 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = ResolveSymbol(index, symbol);
+            var resolution = await ResolveSymbolAsync(activeSession, index, symbol, kindFilter: null, ct);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
-            var related = await CollectRelatedSymbolsAsync(activeSession, index, resolution.Entry!, relations, activeSession.PathStyle, ct);
-            var symbolSummary = resolution.Entry!.ToSummary();
+            var resolved = resolution.Resolved!.Value;
+            var related = await CollectRelatedSymbolsAsync(activeSession, index, resolved, relations, activeSession.PathStyle, ct);
+            var symbolSummary = index.ToSummary(resolved);
             return new()
             {
                 Success = true,
@@ -256,13 +260,14 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = ResolveSymbol(index, symbol);
+            var resolution = await ResolveSymbolAsync(activeSession, index, symbol, kindFilter: null, ct);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
-            var entry = resolution.Entry!;
-            var symbolSummary = entry.ToSummary();
-            if (entry.Symbol is not IMethodSymbol and not IPropertySymbol)
+            var resolved = resolution.Resolved!.Value;
+            var entry = resolved.Entry;
+            var symbolSummary = index.ToSummary(resolved);
+            if (resolved.Symbol is not IMethodSymbol and not IPropertySymbol)
             {
                 return new()
                 {
@@ -274,7 +279,7 @@ public sealed class WorkspaceSessionManager
 
             if (string.Equals(entry.Origin, "metadata", StringComparison.Ordinal))
             {
-                var metadataResult = IlViewer.ViewMetadata(entry, compact, ct);
+                var metadataResult = IlViewer.ViewMetadata(resolved, index.GetAssemblyPath(entry), compact, ct);
                 return new()
                 {
                     Success = metadataResult.Success,
@@ -287,7 +292,7 @@ public sealed class WorkspaceSessionManager
                 };
             }
 
-            var project = FindProject(activeSession, entry);
+            var project = index.GetProject(activeSession.Solution, entry);
             if (project is null)
             {
                 return new()
@@ -298,7 +303,7 @@ public sealed class WorkspaceSessionManager
                 };
             }
 
-            var result = await IlViewer.ViewAsync(project, entry.Symbol, compact, ct);
+            var result = await IlViewer.ViewAsync(project, resolved.Symbol, compact, ct);
             return new()
             {
                 Success = result.Success,
@@ -419,33 +424,29 @@ public sealed class WorkspaceSessionManager
         return result;
     }
 
-    static Project? FindProject(WorkspaceSession session, SymbolSearchEntry entry)
-    {
-        foreach (var project in session.Solution.Projects)
-        {
-            if (project.Language != LanguageNames.CSharp)
-                continue;
-
-            if (!string.Equals(project.Name, entry.Project, StringComparison.Ordinal))
-                continue;
-
-            if (entry.ProjectPath is null || project.FilePath is null || PathsEqual(project.FilePath, entry.ProjectPath))
-                return project;
-        }
-
-        return null;
-    }
-
-    static SymbolResolution ResolveSymbol(WorkspaceSymbolIndex index, string symbol, string? kindFilter = null)
+    static async Task<ResolvedSymbolResolution> ResolveSymbolAsync(
+        WorkspaceSession session,
+        WorkspaceSymbolIndex index,
+        string symbol,
+        string? kindFilter,
+        CancellationToken ct)
     {
         var sourceResolution = index.Resolve(symbol, kindFilter);
-        if (sourceResolution.Success || sourceResolution.Candidates.Length > 0)
-            return sourceResolution;
+        if (sourceResolution.Success)
+        {
+            var resolved = await index.ResolveAsync(session.Solution, sourceResolution.Entry!.Value, ct);
+            return resolved is { } value
+                ? ResolvedSymbolResolution.Found(value)
+                : ResolvedSymbolResolution.NotFound($"'{symbol}' resolved to a source symbol, but the declaration is no longer available.");
+        }
 
-        var metadataResolution = index.ExternalMetadata.Resolve(symbol, kindFilter);
+        if (sourceResolution.Candidates.Length > 0)
+            return ResolvedSymbolResolution.Ambiguous(sourceResolution.Error ?? $"'{symbol}' is ambiguous.", sourceResolution.Candidates);
+
+        var metadataResolution = await index.ExternalMetadata.ResolveAsync(session.Solution, symbol, kindFilter, ct);
         return metadataResolution.Success || metadataResolution.Candidates.Length > 0
             ? metadataResolution
-            : sourceResolution;
+            : ResolvedSymbolResolution.NotFound(sourceResolution.Error ?? $"'{symbol}' did not resolve to a symbol.");
     }
 
     static bool PathsEqual(string left, string right)
@@ -589,7 +590,7 @@ public sealed class WorkspaceSessionManager
             _ => severity.ToString().ToLowerInvariant(),
         };
 
-    static IEnumerable<SymbolSearchEntry> CollectTypeMembers(WorkspaceSymbolIndex index, INamedTypeSymbol typeSymbol, bool includeInherited)
+    static IEnumerable<ResolvedSymbol> CollectTypeMembers(WorkspaceSymbolIndex index, Solution solution, INamedTypeSymbol typeSymbol, bool includeInherited)
     {
         var memberSymbols = new List<ISymbol>();
         AddDeclared(typeSymbol);
@@ -606,9 +607,9 @@ public sealed class WorkspaceSessionManager
         return memberSymbols
             .AsValueEnumerable()
             .Distinct(SymbolEqualityComparer.Default)
-            .Select(index.GetOrCreateEntry)
-            .OrderBy(static entry => entry.Kind, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(static entry => entry.DisplaySignature, StringComparer.OrdinalIgnoreCase)
+            .Select(symbol => index.CreateResolvedSymbol(solution, symbol))
+            .OrderBy(static resolved => resolved.Entry.Kind, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static resolved => resolved.Entry.DisplaySignature, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         void AddDeclared(INamedTypeSymbol namedType)
@@ -701,9 +702,9 @@ public sealed class WorkspaceSessionManager
         };
     }
 
-    static SymbolSummary[] CollectOverloads(WorkspaceSymbolIndex index, SymbolSearchEntry entry, WorkspacePathStyle pathStyle)
+    static SymbolSummary[] CollectOverloads(WorkspaceSymbolIndex index, Solution solution, ResolvedSymbol resolved, WorkspacePathStyle pathStyle)
     {
-        if (entry.Symbol is not IMethodSymbol { ContainingType: not null } method)
+        if (resolved.Symbol is not IMethodSymbol { ContainingType: not null } method)
             return [];
 
         var overloads = method.ContainingType
@@ -716,8 +717,8 @@ public sealed class WorkspaceSessionManager
                 && WorkspaceSymbolIndex.ShouldIndexMember(candidate))
             .Cast<ISymbol>()
             .Distinct(SymbolEqualityComparer.Default)
-            .Select(index.GetOrCreateEntry)
-            .OrderBy(static overload => overload.DisplaySignature, StringComparer.OrdinalIgnoreCase)
+            .Select(symbol => index.CreateResolvedSymbol(solution, symbol))
+            .OrderBy(static overload => overload.Entry.DisplaySignature, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         if (overloads.Length <= 1)
@@ -727,7 +728,7 @@ public sealed class WorkspaceSessionManager
             .AsValueEnumerable()
             .Select(overload =>
             {
-                var summary = overload.ToSummary();
+                var summary = index.ToSummary(overload);
                 return ApplyPathStyle(in summary, pathStyle);
             })
             .ToArray();
@@ -750,9 +751,9 @@ public sealed class WorkspaceSessionManager
             Examples = references.AsValueEnumerable().Take(3).ToArray(),
         };
 
-    async Task<ReferenceInfo[]> CollectReferencesAsync(WorkspaceSession session, SymbolSearchEntry entry, WorkspacePathStyle pathStyle, CancellationToken ct)
+    async Task<ReferenceInfo[]> CollectReferencesAsync(WorkspaceSession session, ResolvedSymbol resolved, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
-        var references = await SymbolFinder.FindReferencesAsync(entry.Symbol, session.Solution, cancellationToken: ct);
+        var references = await SymbolFinder.FindReferencesAsync(resolved.Symbol, session.Solution, cancellationToken: ct);
         var textCache = new Dictionary<DocumentId, SourceText>();
         var items = new List<ReferenceInfo>();
 
@@ -792,17 +793,17 @@ public sealed class WorkspaceSessionManager
             .ToArray();
     }
 
-    static async Task<DiagnosticInfo[]> CollectSymbolDiagnosticsAsync(WorkspaceSession session, SymbolSearchEntry entry, WorkspacePathStyle pathStyle, CancellationToken ct)
+    static async Task<DiagnosticInfo[]> CollectSymbolDiagnosticsAsync(WorkspaceSession session, WorkspaceSymbolIndex index, ResolvedSymbol resolved, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
-        if (entry.Symbol.DeclaringSyntaxReferences.Length is 0)
+        if (resolved.Symbol.DeclaringSyntaxReferences.Length is 0)
             return [];
 
-        var project = FindProject(session, entry);
+        var project = index.GetProject(session.Solution, resolved.Entry);
         if (project is null)
             return [];
 
         var declaringSpans = new List<(SyntaxTree Tree, TextSpan Span)>();
-        foreach (var syntaxReference in entry.Symbol.DeclaringSyntaxReferences)
+        foreach (var syntaxReference in resolved.Symbol.DeclaringSyntaxReferences)
         {
             var syntax = await syntaxReference.GetSyntaxAsync(ct);
             declaringSpans.Add((syntaxReference.SyntaxTree, syntax.FullSpan));
@@ -873,7 +874,7 @@ public sealed class WorkspaceSessionManager
     async Task<RelatedSymbolInfo[]> CollectRelatedSymbolsAsync(
         WorkspaceSession session,
         WorkspaceSymbolIndex index,
-        SymbolSearchEntry entry,
+        ResolvedSymbol resolved,
         string[]? requestedRelations,
         WorkspacePathStyle pathStyle,
         CancellationToken ct)
@@ -901,18 +902,18 @@ public sealed class WorkspaceSessionManager
             switch (true)
             {
                 case true when relation.Equals("base_types", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol is INamedTypeSymbol namedType && namedType.BaseType is { SpecialType: not SpecialType.System_Object } baseType)
+                    if (resolved.Symbol is INamedTypeSymbol namedType && namedType.BaseType is { SpecialType: not SpecialType.System_Object } baseType)
                         Add(relation, baseType);
                     break;
 
                 case true when relation.Equals("implemented_interfaces", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol is INamedTypeSymbol interfaceOwner)
+                    if (resolved.Symbol is INamedTypeSymbol interfaceOwner)
                         foreach (var item in interfaceOwner.Interfaces)
                             Add(relation, item);
                     break;
 
                 case true when relation.Equals("derived_types", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol is INamedTypeSymbol derivableType)
+                    if (resolved.Symbol is INamedTypeSymbol derivableType)
                     {
                         if (derivableType.TypeKind == TypeKind.Interface)
                         {
@@ -928,19 +929,19 @@ public sealed class WorkspaceSessionManager
                     break;
 
                 case true when relation.Equals("implementations", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol is INamedTypeSymbol or IMethodSymbol or IPropertySymbol or IEventSymbol)
-                        foreach (var item in await SymbolFinder.FindImplementationsAsync(entry.Symbol, session.Solution, cancellationToken: ct))
+                    if (resolved.Symbol is INamedTypeSymbol or IMethodSymbol or IPropertySymbol or IEventSymbol)
+                        foreach (var item in await SymbolFinder.FindImplementationsAsync(resolved.Symbol, session.Solution, cancellationToken: ct))
                             Add(relation, item);
                     break;
 
                 case true when relation.Equals("overrides", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol is IMethodSymbol or IPropertySymbol or IEventSymbol)
-                        foreach (var item in await SymbolFinder.FindOverridesAsync(entry.Symbol, session.Solution, cancellationToken: ct))
+                    if (resolved.Symbol is IMethodSymbol or IPropertySymbol or IEventSymbol)
+                        foreach (var item in await SymbolFinder.FindOverridesAsync(resolved.Symbol, session.Solution, cancellationToken: ct))
                             Add(relation, item);
                     break;
 
                 case true when relation.Equals("overridden_members", StringComparison.OrdinalIgnoreCase):
-                    switch (entry.Symbol)
+                    switch (resolved.Symbol)
                     {
                         case IMethodSymbol { OverriddenMethod: not null } method:
                             Add(relation, method.OverriddenMethod);
@@ -955,9 +956,9 @@ public sealed class WorkspaceSessionManager
                     break;
 
                 case true when relation.Equals("containing_symbol", StringComparison.OrdinalIgnoreCase):
-                    if (entry.Symbol.ContainingType is not null)
-                        Add(relation, entry.Symbol.ContainingType);
-                    else if (entry.Symbol.ContainingNamespace is { IsGlobalNamespace: false } containingNamespace)
+                    if (resolved.Symbol.ContainingType is not null)
+                        Add(relation, resolved.Symbol.ContainingType);
+                    else if (resolved.Symbol.ContainingNamespace is { IsGlobalNamespace: false } containingNamespace)
                         Add(relation, containingNamespace);
                     break;
             }
@@ -967,12 +968,12 @@ public sealed class WorkspaceSessionManager
 
         void Add(string relation, ISymbol symbol)
         {
-            var resolved = index.GetOrCreateEntry(symbol);
-            var key = relation + "\n" + resolved.CanonicalSignature;
+            var related = index.CreateResolvedSymbol(session.Solution, symbol);
+            var key = relation + "\n" + index.GetCanonicalSignature(related.Entry);
             if (!seen.Add(key))
                 return;
 
-            var summary = resolved.ToSummary();
+            var summary = index.ToSummary(related);
             results.Add(new()
             {
                 Relation = relation,

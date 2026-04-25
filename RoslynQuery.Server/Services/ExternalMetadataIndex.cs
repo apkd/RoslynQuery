@@ -12,8 +12,8 @@ sealed class ExternalMetadataIndex
         globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
         typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
         genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters | SymbolDisplayGenericsOptions.IncludeVariance,
-        miscellaneousOptions: SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers
-                              | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+        miscellaneousOptions: SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier
+    );
 
     static readonly Dictionary<string, string> specialTypeMetadataNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -35,59 +35,115 @@ sealed class ExternalMetadataIndex
         ["void"] = "System.Void",
     };
 
-    readonly ExternalAssemblyInfo[] assemblies;
-    readonly string[] namespaces;
-    readonly Dictionary<string, string> assemblyPathsByIdentity;
+    readonly Lock buildGate = new();
+    Task<ExternalMetadataSnapshot>? snapshotTask;
+    ExternalMetadataSnapshot? snapshot;
 
-    ExternalMetadataIndex(
-        ExternalAssemblyInfo[] assemblies,
-        string[] namespaces,
-        Dictionary<string, string> assemblyPathsByIdentity)
+    public string? GetAssemblyName(int assemblyIndex)
     {
-        this.assemblies = assemblies;
-        this.namespaces = namespaces;
-        this.assemblyPathsByIdentity = assemblyPathsByIdentity;
+        var current = snapshot;
+        return current is not null && (uint)assemblyIndex < (uint)current.Assemblies.Length
+            ? current.Assemblies[assemblyIndex].Name
+            : null;
+    }
+
+    public string? GetAssemblyPath(int assemblyIndex)
+    {
+        var current = snapshot;
+        return current is not null && (uint)assemblyIndex < (uint)current.Assemblies.Length
+            ? current.Assemblies[assemblyIndex].AssemblyPath
+            : null;
+    }
+
+    public int TryGetAssemblyIndex(ISymbol symbol)
+    {
+        var current = snapshot;
+        var assembly = symbol.ContainingAssembly;
+        return current is not null
+            && assembly is not null
+            && current.AssemblyIndexesByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var index)
+            ? index
+            : -1;
     }
 
     public string? TryGetAssemblyPath(ISymbol symbol)
     {
+        var current = snapshot;
         var assembly = symbol.ContainingAssembly;
-        return assembly is not null && assemblyPathsByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var path)
+        return current is not null
+            && assembly is not null
+            && current.AssemblyPathsByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var path)
             ? path
             : null;
     }
 
-    public SymbolResolution Resolve(string query, string? kindFilter = null)
+    public async Task<ResolvedSymbolResolution> ResolveAsync(Solution solution, string query, string? kindFilter, CancellationToken ct)
     {
-        if (assemblies.Length is 0 || string.IsNullOrWhiteSpace(query))
-            return SymbolResolution.NotFound($"'{query}' did not resolve to a symbol.");
+        if (string.IsNullOrWhiteSpace(query))
+            return ResolvedSymbolResolution.NotFound($"'{query}' did not resolve to a symbol.");
 
         var parsed = ParseAssemblyFilter(query);
         if (parsed.SymbolQuery.Length is 0)
-            return SymbolResolution.NotFound("Symbol is required.");
+            return ResolvedSymbolResolution.NotFound("Symbol is required.");
+
+        var current = await GetSnapshotAsync(solution, ct);
+        if (current.Assemblies.Length is 0)
+            return ResolvedSymbolResolution.NotFound($"'{query}' did not resolve to a symbol.");
 
         var kind = string.IsNullOrWhiteSpace(kindFilter) ? "all" : kindFilter.Trim();
-        var matches = ResolveCore(parsed.SymbolQuery, parsed.AssemblyFilter, kind)
+        var matches = (await ResolveCoreAsync(current, solution, parsed.SymbolQuery, parsed.AssemblyFilter, kind, ct))
             .AsValueEnumerable()
-            .OrderBy(static entry => entry.CanonicalSignature, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(match => GetCanonicalSignature(current, match.Entry), StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         return matches.Length switch
         {
-            0 => SymbolResolution.NotFound($"'{query}' did not resolve to a symbol."),
-            1 => SymbolResolution.Resolved(matches[0]),
-            _ => SymbolResolution.Ambiguous($"'{query}' is ambiguous.", matches),
+            0 => ResolvedSymbolResolution.NotFound($"'{query}' did not resolve to a symbol."),
+            1 => ResolvedSymbolResolution.Found(matches[0]),
+            _ => ResolvedSymbolResolution.Ambiguous(
+                $"'{query}' is ambiguous.",
+                matches.AsValueEnumerable().Select(match => GetCanonicalSignature(current, match.Entry)).ToArray()
+            ),
         };
     }
 
-    SymbolSearchEntry[] ResolveCore(string query, string? assemblyFilter, string kind)
+    public async Task<ResolvedSymbol?> ResolveAsync(Solution solution, SymbolSearchEntry entry, CancellationToken ct)
+    {
+        if (!entry.IsMetadata)
+            return null;
+
+        var current = await GetSnapshotAsync(solution, ct);
+        if ((uint)entry.ExternalAssemblyIndex >= (uint)current.Assemblies.Length)
+            return null;
+
+        var matches = await ResolveCoreAsync(
+            current,
+            solution,
+            entry.DisplaySignature,
+            current.Assemblies[entry.ExternalAssemblyIndex].IdentityKey,
+            "all",
+            ct);
+        foreach (var match in matches)
+            if (string.Equals(match.Entry.DisplaySignature, entry.DisplaySignature, Ordinal))
+                return match;
+
+        return null;
+    }
+
+    async Task<ResolvedSymbol[]> ResolveCoreAsync(
+        ExternalMetadataSnapshot current,
+        Solution solution,
+        string query,
+        string? assemblyFilter,
+        string kind,
+        CancellationToken ct)
     {
         if (KindMatchesCategory(kind, "type"))
         {
-            var typeMatches = ResolveTypes(query, assemblyFilter)
+            var typeMatches = (await ResolveTypesAsync(current, solution, query, assemblyFilter, ct))
                 .AsValueEnumerable()
-                .Select(symbol => CreateEntry(symbol))
-                .Where(entry => entry.MatchesKind(kind))
+                .Select(type => CreateResolvedSymbol(type.Symbol, type.AssemblyIndex))
+                .Where(resolved => resolved.Entry.MatchesKind(kind))
                 .ToArray();
 
             if (typeMatches.Length > 0 || !KindMatchesCategory(kind, "member"))
@@ -97,10 +153,16 @@ sealed class ExternalMetadataIndex
         if (!KindMatchesCategory(kind, "member"))
             return [];
 
-        return ResolveMembers(query, assemblyFilter, kind);
+        return await ResolveMembersAsync(current, solution, query, assemblyFilter, kind, ct);
     }
 
-    SymbolSearchEntry[] ResolveMembers(string query, string? assemblyFilter, string kind)
+    async Task<ResolvedSymbol[]> ResolveMembersAsync(
+        ExternalMetadataSnapshot current,
+        Solution solution,
+        string query,
+        string? assemblyFilter,
+        string kind,
+        CancellationToken ct)
     {
         foreach (var splitIndex in EnumerateMemberSplitIndexes(query))
         {
@@ -109,7 +171,7 @@ sealed class ExternalMetadataIndex
             if (typeQuery.Length is 0 || memberQuery.Length is 0)
                 continue;
 
-            var types = ResolveTypes(typeQuery, assemblyFilter);
+            var types = await ResolveTypesAsync(current, solution, typeQuery, assemblyFilter, ct);
             if (types.Length is 0)
                 continue;
 
@@ -117,20 +179,20 @@ sealed class ExternalMetadataIndex
             if (parsedMember.Name.Length is 0)
                 continue;
 
-            var entries = new List<SymbolSearchEntry>();
+            var entries = new List<ResolvedSymbol>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var type in types)
-            foreach (var member in type.GetMembers(parsedMember.Name))
+            foreach (var member in type.Symbol.GetMembers(parsedMember.Name))
             {
                 if (!WorkspaceSymbolIndex.ShouldIndexMember(member) || !MemberMatches(member, parsedMember))
                     continue;
 
-                var entry = CreateEntry(member);
-                if (!entry.MatchesKind(kind))
+                var resolved = CreateResolvedSymbol(member, type.AssemblyIndex);
+                if (!resolved.Entry.MatchesKind(kind))
                     continue;
 
-                if (seen.Add(GetSymbolKey(member, entry)))
-                    entries.Add(entry);
+                if (seen.Add(GetSymbolKey(member, resolved.Entry)))
+                    entries.Add(resolved);
             }
 
             if (entries.Count > 0)
@@ -140,39 +202,50 @@ sealed class ExternalMetadataIndex
         return [];
     }
 
-    INamedTypeSymbol[] ResolveTypes(string query, string? assemblyFilter)
+    async Task<(INamedTypeSymbol Symbol, int AssemblyIndex)[]> ResolveTypesAsync(
+        ExternalMetadataSnapshot current,
+        Solution solution,
+        string query,
+        string? assemblyFilter,
+        CancellationToken ct)
     {
         var metadataNames = GetTypeMetadataNameCandidates(query);
         var typePathCandidates = GetNamespaceTypePathCandidates(query);
         if (metadataNames.Length is 0 && typePathCandidates.Length is 0)
             return [];
 
-        var results = new List<INamedTypeSymbol>();
+        var results = new List<(INamedTypeSymbol Symbol, int AssemblyIndex)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var assembly in assemblies)
+        var compilationCache = new Dictionary<ProjectId, Compilation?>();
+        for (var assemblyIndex = 0; assemblyIndex < current.Assemblies.Length; assemblyIndex++)
         {
-            if (!assembly.MatchesFilter(assemblyFilter))
+            var descriptor = current.Assemblies[assemblyIndex];
+            if (!descriptor.MatchesFilter(assemblyFilter))
+                continue;
+
+            var assembly = await GetAssemblySymbolAsync(current, solution, assemblyIndex, compilationCache, ct);
+            if (assembly is null)
                 continue;
 
             foreach (var metadataName in metadataNames)
             {
-                var symbol = assembly.Symbol.GetTypeByMetadataName(metadataName);
+                var symbol = assembly.GetTypeByMetadataName(metadataName);
                 if (symbol is null && !metadataName.Contains('+'))
-                    symbol = assembly.Symbol.ResolveForwardedType(metadataName);
+                    symbol = assembly.ResolveForwardedType(metadataName);
 
                 if (symbol is null)
                     continue;
 
-                var key = assembly.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
+                var key = descriptor.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
                 if (seen.Add(key))
-                    results.Add(symbol);
+                    results.Add((symbol, assemblyIndex));
             }
 
-            foreach (var symbol in ResolveTypesByNamespaceTraversal(assembly.Symbol, typePathCandidates))
+            foreach (var symbol in ResolveTypesByNamespaceTraversal(assembly, typePathCandidates))
             {
-                var key = assembly.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
+                var key = descriptor.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
                 if (seen.Add(key))
-                    results.Add(symbol);
+                    results.Add((symbol, assemblyIndex));
             }
         }
 
@@ -181,7 +254,8 @@ sealed class ExternalMetadataIndex
 
     static INamedTypeSymbol[] ResolveTypesByNamespaceTraversal(
         IAssemblySymbol assembly,
-        (string Namespace, string TypePath)[] candidates)
+        (string Namespace, string TypePath)[] candidates
+    )
     {
         if (candidates.Length is 0)
             return [];
@@ -211,32 +285,14 @@ sealed class ExternalMetadataIndex
         var results = new List<(string Namespace, string TypePath)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         AddUngatedNamespaceTypePathCandidates(normalized, results, seen);
-        foreach (var @namespace in namespaces)
-        {
-            if (normalized.Length <= @namespace.Length || !normalized.StartsWith(@namespace + ".", Ordinal))
-                continue;
-
-            var typePath = normalized[(@namespace.Length + 1)..].Trim();
-            if (typePath.Length is 0)
-                continue;
-
-            Add(@namespace, typePath);
-        }
-
         return [.. results];
-
-        void Add(string @namespace, string typePath)
-        {
-            var key = @namespace + "\n" + typePath;
-            if (seen.Add(key))
-                results.Add((@namespace, typePath));
-        }
     }
 
     static void AddUngatedNamespaceTypePathCandidates(
         string normalized,
         List<(string Namespace, string TypePath)> results,
-        HashSet<string> seen)
+        HashSet<string> seen
+    )
     {
         var separatorIndexes = GetTopLevelTypePathSeparatorIndexes(normalized);
         for (var i = separatorIndexes.Length - 1; i >= 0; i--)
@@ -337,22 +393,6 @@ sealed class ExternalMetadataIndex
         var results = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         AddUngatedTypeMetadataNameCandidates(normalized, results, seen);
-
-        foreach (var @namespace in namespaces)
-        {
-            if (normalized.Length <= @namespace.Length || !normalized.StartsWith(@namespace + ".", Ordinal))
-                continue;
-
-            var typePath = normalized[(@namespace.Length + 1)..];
-            var metadataTypePath = ToMetadataTypePath(typePath);
-            if (metadataTypePath.Length is 0)
-                continue;
-
-            var metadataName = @namespace + "." + metadataTypePath;
-            if (seen.Add(metadataName))
-                results.Add(metadataName);
-        }
-
         return [.. results];
     }
 
@@ -391,9 +431,9 @@ sealed class ExternalMetadataIndex
         {
             depth = value[i] switch
             {
-                '<' => depth + 1,
+                '<'                => depth + 1,
                 '>' when depth > 0 => depth - 1,
-                _ => depth,
+                _                  => depth,
             };
 
             if (value[i] == '.' && depth is 0)
@@ -403,8 +443,14 @@ sealed class ExternalMetadataIndex
         return [.. indexes];
     }
 
-    SymbolSearchEntry CreateEntry(ISymbol symbol)
-        => SymbolSearchEntry.CreateMetadata(symbol, TryGetAssemblyPath(symbol));
+    ResolvedSymbol CreateResolvedSymbol(ISymbol symbol, int assemblyIndex)
+        => new(SymbolSearchEntry.CreateMetadata(symbol, assemblyIndex), symbol);
+
+    static string GetCanonicalSignature(ExternalMetadataSnapshot current, SymbolSearchEntry entry)
+        => $"{GetAssemblyName(current, entry.ExternalAssemblyIndex) ?? "metadata"}::{entry.DisplaySignature}";
+
+    static string? GetAssemblyName(ExternalMetadataSnapshot current, int assemblyIndex)
+        => (uint)assemblyIndex < (uint)current.Assemblies.Length ? current.Assemblies[assemblyIndex].Name : null;
 
     static IEnumerable<int> EnumerateMemberSplitIndexes(string query)
     {
@@ -418,9 +464,9 @@ sealed class ExternalMetadataIndex
         {
             depth = query[i] switch
             {
-                '<' => depth + 1,
+                '<'                => depth + 1,
                 '>' when depth > 0 => depth - 1,
-                _ => depth,
+                _                  => depth,
             };
 
             if (query[i] == '.' && depth is 0)
@@ -444,10 +490,10 @@ sealed class ExternalMetadataIndex
 
         return member switch
         {
-            IMethodSymbol method => ParametersMatch(method.Parameters, query.Parameters),
-            IPropertySymbol { IsIndexer: true } property => ParametersMatch(property.Parameters, query.Parameters),
+            IMethodSymbol method                            => ParametersMatch(method.Parameters, query.Parameters),
+            IPropertySymbol { IsIndexer: true } property    => ParametersMatch(property.Parameters, query.Parameters),
             IPropertySymbol or IFieldSymbol or IEventSymbol => query.Parameters.Length is 0,
-            _ => false,
+            _                                               => false,
         };
     }
 
@@ -627,9 +673,9 @@ sealed class ExternalMetadataIndex
         {
             depth = value[i] switch
             {
-                '<' => depth + 1,
+                '<'                => depth + 1,
                 '>' when depth > 0 => depth - 1,
-                _ => depth,
+                _                  => depth,
             };
 
             if (depth is not 0 || value[i] is not ('.' or '+'))
@@ -691,6 +737,7 @@ sealed class ExternalMetadataIndex
                     depth--;
                     if (depth is 0)
                         return i;
+
                     break;
             }
         }
@@ -709,9 +756,9 @@ sealed class ExternalMetadataIndex
         {
             depth = character switch
             {
-                '<' => depth + 1,
+                '<'                => depth + 1,
                 '>' when depth > 0 => depth - 1,
-                _ => depth,
+                _                  => depth,
             };
 
             if (character == ',' && depth is 0)
@@ -724,9 +771,9 @@ sealed class ExternalMetadataIndex
     static bool KindMatchesCategory(string kind, string category)
         => category switch
         {
-            "type" => kind is "all" or "type" or "class" or "interface" or "struct" or "record" or "enum" or "delegate",
+            "type"   => kind is "all" or "type" or "class" or "interface" or "struct" or "record" or "enum" or "delegate",
             "member" => kind is "all" or "member" or "method" or "property" or "indexer" or "field" or "event" or "operator" or "conversion",
-            _ => false,
+            _        => false,
         };
 
     static (string? AssemblyFilter, string SymbolQuery) ParseAssemblyFilter(string query)
@@ -744,8 +791,135 @@ sealed class ExternalMetadataIndex
     static string GetAssemblyIdentityKey(IAssemblySymbol? assembly)
         => assembly?.Identity.ToString() ?? "";
 
+    async Task<IAssemblySymbol?> GetAssemblySymbolAsync(
+        ExternalMetadataSnapshot current,
+        Solution solution,
+        int assemblyIndex,
+        Dictionary<ProjectId, Compilation?> compilationCache,
+        CancellationToken ct)
+    {
+        if ((uint)assemblyIndex >= (uint)current.Assemblies.Length)
+            return null;
+
+        var descriptor = current.Assemblies[assemblyIndex];
+        if (descriptor.Symbol is not null)
+            return descriptor.Symbol;
+
+        if (!compilationCache.TryGetValue(descriptor.ProjectId, out var compilation))
+        {
+            var project = solution.GetProject(descriptor.ProjectId);
+            compilation = project is null ? null : await project.GetCompilationAsync(ct);
+            compilationCache.Add(descriptor.ProjectId, compilation);
+        }
+
+        if (compilation is null)
+            return null;
+
+        foreach (var reference in compilation.References)
+        {
+            if (reference is not PortableExecutableReference portableReference)
+                continue;
+
+            if (!ReferenceLooksLikeDescriptor(portableReference, descriptor))
+                continue;
+
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly
+                && string.Equals(GetAssemblyIdentityKey(assembly), descriptor.IdentityKey, Ordinal))
+                return assembly;
+        }
+
+        foreach (var reference in compilation.References)
+        {
+            if (reference is not PortableExecutableReference)
+                continue;
+
+            if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly
+                && string.Equals(GetAssemblyIdentityKey(assembly), descriptor.IdentityKey, Ordinal))
+                return assembly;
+        }
+
+        return null;
+    }
+
+    static bool ReferenceLooksLikeDescriptor(PortableExecutableReference reference, ExternalAssemblyInfo descriptor)
+        => !string.IsNullOrWhiteSpace(descriptor.AssemblyPath) && PathsEqual(reference.FilePath, descriptor.AssemblyPath)
+           || !string.IsNullOrWhiteSpace(descriptor.Display) && string.Equals(reference.Display, descriptor.Display, Ordinal);
+
+    static bool PathsEqual(string? left, string? right)
+    {
+        if (left is null || right is null)
+            return false;
+
+        var comparison = OperatingSystem.IsWindows()
+            ? OrdinalIgnoreCase
+            : Ordinal;
+        return string.Equals(left, right, comparison);
+    }
+
+    async Task<ExternalMetadataSnapshot> GetSnapshotAsync(Solution solution, CancellationToken ct)
+    {
+        if (snapshot is { } current)
+            return current;
+
+        Task<ExternalMetadataSnapshot> task;
+        lock (buildGate)
+        {
+            if (snapshot is { } initialized)
+                return initialized;
+
+            task = snapshotTask ??= BuildSnapshotAsync(solution, ct);
+        }
+
+        try
+        {
+            current = await task;
+        }
+        catch
+        {
+            lock (buildGate)
+            {
+                if (ReferenceEquals(snapshotTask, task))
+                    snapshotTask = null;
+            }
+
+            throw;
+        }
+
+        lock (buildGate)
+        {
+            snapshot = current;
+            if (ReferenceEquals(snapshotTask, task))
+                snapshotTask = null;
+
+            return current;
+        }
+    }
+
+    static async Task<ExternalMetadataSnapshot> BuildSnapshotAsync(Solution solution, CancellationToken ct)
+    {
+        var builder = new Builder();
+        foreach (var project in solution.Projects)
+        {
+            if (project.Language != LanguageNames.CSharp)
+                continue;
+
+            ct.ThrowIfCancellationRequested();
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation is not null)
+                builder.Add(compilation, project.Id);
+        }
+
+        return builder.BuildSnapshot();
+    }
+
+    sealed record ExternalMetadataSnapshot(
+        ExternalAssemblyInfo[] Assemblies,
+        Dictionary<string, string> AssemblyPathsByIdentity,
+        Dictionary<string, int> AssemblyIndexesByIdentity);
+
     sealed record ExternalAssemblyInfo(
-        IAssemblySymbol Symbol,
+        IAssemblySymbol? Symbol,
+        ProjectId ProjectId,
         string IdentityKey,
         string Name,
         string? AssemblyPath,
@@ -761,9 +935,10 @@ sealed class ExternalMetadataIndex
 
     sealed class MutableExternalAssemblyInfo
     {
-        public MutableExternalAssemblyInfo(IAssemblySymbol symbol, string identityKey, string name, string? assemblyPath, string? display)
+        public MutableExternalAssemblyInfo(IAssemblySymbol symbol, ProjectId projectId, string identityKey, string name, string? assemblyPath, string? display)
         {
             Symbol = symbol;
+            ProjectId = projectId;
             IdentityKey = identityKey;
             Name = name;
             AssemblyPath = assemblyPath;
@@ -771,6 +946,8 @@ sealed class ExternalMetadataIndex
         }
 
         public IAssemblySymbol Symbol { get; }
+
+        public ProjectId ProjectId { get; }
 
         public string IdentityKey { get; }
 
@@ -790,7 +967,7 @@ sealed class ExternalMetadataIndex
         }
 
         public ExternalAssemblyInfo ToImmutable()
-            => new(Symbol, IdentityKey, Name, AssemblyPath, Display);
+            => new(Symbol, ProjectId, IdentityKey, Name, AssemblyPath, Display);
     }
 
     readonly record struct ParsedMemberQuery(string Name, int? GenericArity, string[]? Parameters)
@@ -813,7 +990,8 @@ sealed class ExternalMetadataIndex
                 genericArity,
                 parameters.Length is 0
                     ? []
-                    : SplitParameters(parameters));
+                    : SplitParameters(parameters)
+            );
         }
 
         static int? ParseGenericArity(string rawName, out string name)
@@ -880,12 +1058,11 @@ sealed class ExternalMetadataIndex
         }
     }
 
-    internal sealed class Builder
+    sealed class Builder
     {
         readonly Dictionary<string, MutableExternalAssemblyInfo> assemblies = new(StringComparer.Ordinal);
-        readonly HashSet<string> namespaces = new(StringComparer.Ordinal);
 
-        internal void Add(Compilation compilation)
+        internal void Add(Compilation compilation, ProjectId projectId)
         {
             foreach (var reference in compilation.References)
             {
@@ -903,12 +1080,11 @@ sealed class ExternalMetadataIndex
                     continue;
                 }
 
-                assemblies.Add(identityKey, new(assembly, identityKey, assembly.Name, assemblyPath, reference.Display));
-                CollectNamespaces(assembly.GlobalNamespace);
+                assemblies.Add(identityKey, new(assembly, projectId, identityKey, assembly.Name, assemblyPath, reference.Display));
             }
         }
 
-        internal ExternalMetadataIndex Build()
+        internal ExternalMetadataSnapshot BuildSnapshot()
         {
             var immutableAssemblies = assemblies
                 .Values
@@ -923,25 +1099,15 @@ sealed class ExternalMetadataIndex
                 .Where(static item => !string.IsNullOrWhiteSpace(item.AssemblyPath))
                 .ToDictionary(static item => item.IdentityKey, static item => item.AssemblyPath!, StringComparer.Ordinal);
 
+            var assemblyIndexesByIdentity = new Dictionary<string, int>(immutableAssemblies.Length, StringComparer.Ordinal);
+            for (var i = 0; i < immutableAssemblies.Length; i++)
+                assemblyIndexesByIdentity[immutableAssemblies[i].IdentityKey] = i;
+
             return new(
                 immutableAssemblies,
-                namespaces
-                    .AsValueEnumerable()
-                    .OrderByDescending(static item => item.Length)
-                    .ThenBy(static item => item, StringComparer.Ordinal)
-                    .ToArray(),
-                assemblyPathsByIdentity);
-        }
-
-        void CollectNamespaces(INamespaceSymbol symbol)
-        {
-            foreach (var namespaceMember in symbol.GetNamespaceMembers())
-            {
-                if (!namespaceMember.IsGlobalNamespace)
-                    namespaces.Add(namespaceMember.ToDisplayString());
-
-                CollectNamespaces(namespaceMember);
-            }
+                assemblyPathsByIdentity,
+                assemblyIndexesByIdentity
+            );
         }
     }
 }
