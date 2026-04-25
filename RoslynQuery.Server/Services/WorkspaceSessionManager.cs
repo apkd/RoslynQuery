@@ -119,7 +119,7 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = index.Resolve(symbol);
+            var resolution = ResolveSymbol(index, symbol);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
@@ -157,7 +157,7 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = index.Resolve(symbol, kindFilter: "type");
+            var resolution = ResolveSymbol(index, symbol, kindFilter: "type");
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
@@ -198,7 +198,7 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = index.Resolve(symbol);
+            var resolution = ResolveSymbol(index, symbol);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
@@ -227,7 +227,7 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = index.Resolve(symbol);
+            var resolution = ResolveSymbol(index, symbol);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
@@ -256,7 +256,7 @@ public sealed class WorkspaceSessionManager
                 return new() { Query = symbol, Error = "No workspace is open." };
 
             var index = await activeSession.GetIndexAsync(ct);
-            var resolution = index.Resolve(symbol);
+            var resolution = ResolveSymbol(index, symbol);
             if (!resolution.Success)
                 return new() { Query = symbol, Error = resolution.Error, Candidates = resolution.Candidates };
 
@@ -269,6 +269,21 @@ public sealed class WorkspaceSessionManager
                     Query = symbol,
                     Error = "IL can only be viewed for methods and properties.",
                     Symbol = ApplyPathStyle(in symbolSummary, activeSession.PathStyle),
+                };
+            }
+
+            if (string.Equals(entry.Origin, "metadata", StringComparison.Ordinal))
+            {
+                var metadataResult = IlViewer.ViewMetadata(entry, compact, ct);
+                return new()
+                {
+                    Success = metadataResult.Success,
+                    Error = metadataResult.Error,
+                    Query = symbol,
+                    Candidates = metadataResult.Candidates,
+                    Symbol = ApplyPathStyle(in symbolSummary, activeSession.PathStyle),
+                    EmitDiagnostics = metadataResult.EmitDiagnostics,
+                    Methods = metadataResult.Methods,
                 };
             }
 
@@ -419,6 +434,18 @@ public sealed class WorkspaceSessionManager
         }
 
         return null;
+    }
+
+    static SymbolResolution ResolveSymbol(WorkspaceSymbolIndex index, string symbol, string? kindFilter = null)
+    {
+        var sourceResolution = index.Resolve(symbol, kindFilter);
+        if (sourceResolution.Success || sourceResolution.Candidates.Length > 0)
+            return sourceResolution;
+
+        var metadataResolution = index.ExternalMetadata.Resolve(symbol, kindFilter);
+        return metadataResolution.Success || metadataResolution.Candidates.Length > 0
+            ? metadataResolution
+            : sourceResolution;
     }
 
     static bool PathsEqual(string left, string right)
@@ -579,7 +606,7 @@ public sealed class WorkspaceSessionManager
         return memberSymbols
             .AsValueEnumerable()
             .Distinct(SymbolEqualityComparer.Default)
-            .Select(symbol => index.TryGetBySymbol(symbol) ?? SymbolSearchEntry.CreateMetadata(symbol))
+            .Select(index.GetOrCreateEntry)
             .OrderBy(static entry => entry.Kind, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static entry => entry.DisplaySignature, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -689,7 +716,7 @@ public sealed class WorkspaceSessionManager
                 && WorkspaceSymbolIndex.ShouldIndexMember(candidate))
             .Cast<ISymbol>()
             .Distinct(SymbolEqualityComparer.Default)
-            .Select(symbol => index.TryGetBySymbol(symbol) ?? SymbolSearchEntry.CreateMetadata(symbol))
+            .Select(index.GetOrCreateEntry)
             .OrderBy(static overload => overload.DisplaySignature, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -940,7 +967,7 @@ public sealed class WorkspaceSessionManager
 
         void Add(string relation, ISymbol symbol)
         {
-            var resolved = index.TryGetBySymbol(symbol) ?? SymbolSearchEntry.CreateMetadata(symbol);
+            var resolved = index.GetOrCreateEntry(symbol);
             var key = relation + "\n" + resolved.CanonicalSignature;
             if (!seen.Add(key))
                 return;
@@ -965,8 +992,10 @@ public sealed class WorkspaceSessionManager
             ShortName = summary.ShortName,
             Kind = summary.Kind,
             TypeKind = summary.TypeKind,
+            Origin = summary.Origin,
             Project = summary.Project,
             ProjectPath = WorkspacePathNormalizer.Format(summary.ProjectPath, pathStyle),
+            AssemblyPath = WorkspacePathNormalizer.Format(summary.AssemblyPath, pathStyle),
             ContainingNamespace = summary.ContainingNamespace,
             ContainingType = summary.ContainingType,
             ReturnType = summary.ReturnType,
@@ -982,8 +1011,10 @@ public sealed class WorkspaceSessionManager
             ShortName = detail.ShortName,
             Kind = detail.Kind,
             TypeKind = detail.TypeKind,
+            Origin = detail.Origin,
             Project = detail.Project,
             ProjectPath = WorkspacePathNormalizer.Format(detail.ProjectPath, pathStyle),
+            AssemblyPath = WorkspacePathNormalizer.Format(detail.AssemblyPath, pathStyle),
             ContainingNamespace = detail.ContainingNamespace,
             ContainingType = detail.ContainingType,
             Accessibility = detail.Accessibility,

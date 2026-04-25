@@ -185,6 +185,49 @@ public sealed class WorkspaceSessionManagerTests
     }
 
     [Test]
+    public async Task ExternalMetadataSymbolsResolveLazily()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+        await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
+
+        var described = await manager.DescribeSymbolAsync("Sample.External.ExternalThing", CancellationToken.None);
+        var members = await manager.ListTypeMembersAsync("Sample.External.ExternalThing", includeInherited: false, CancellationToken.None);
+        var usages = await manager.FindUsagesAsync("Sample.External.ExternalThing.Compute(int)", CancellationToken.None);
+        var related = await manager.FindRelatedSymbolsAsync(
+            "Sample.External.IExternalGreeter",
+            ["implementations"],
+            CancellationToken.None);
+        var il = await manager.ViewIlAsync("Sample.External.ExternalThing.Compute(int)", CancellationToken.None);
+        var stringLength = await manager.DescribeSymbolAsync("string.Length", CancellationToken.None);
+        var sourceFirst = await manager.DescribeSymbolAsync("Consumer", CancellationToken.None);
+        var shortExternal = await manager.DescribeSymbolAsync("ExternalThing", CancellationToken.None);
+
+        await Assert.That(described.Success).IsTrue();
+        await Assert.That(described.Symbol?.Origin).IsEqualTo("metadata");
+        await Assert.That(described.Symbol?.Project).IsEqualTo("Sample.External");
+        await Assert.That(described.Symbol?.AssemblyPath).IsEqualTo(fixture.ExternalAssemblyPath);
+        await Assert.That(described.Symbol?.Locations).IsEmpty();
+        await Assert.That(members.Success).IsTrue();
+        await Assert.That(members.Members).Contains(member => member.DisplaySignature.Contains("ExternalThing.Compute", Ordinal) && member.ReturnType == "int");
+        await Assert.That(members.Members).Contains(member => member.DisplaySignature.Contains("ExternalThing.Name", Ordinal) && member.ValueType == "string");
+        await Assert.That(usages.Success).IsTrue();
+        await Assert.That(usages.References).Contains(reference => string.Equals(reference.DocumentPath, fixture.ConsumerPath, OrdinalIgnoreCase));
+        await Assert.That(related.Success).IsTrue();
+        await Assert.That(related.Relations).Contains(relation => relation.Symbol.CanonicalSignature.Contains("Sample.App.Consumer", Ordinal));
+        await Assert.That(il.Success).IsTrue();
+        await Assert.That(il.Methods).HasSingleItem();
+        await Assert.That(il.Methods.Single().Instructions).Contains(instruction => instruction.Contains("add", Ordinal));
+        await Assert.That(stringLength.Success).IsTrue();
+        await Assert.That(stringLength.Symbol?.Origin).IsEqualTo("metadata");
+        await Assert.That(stringLength.Symbol?.Kind).IsEqualTo("property");
+        await Assert.That(stringLength.Symbol?.ValueType).IsEqualTo("int");
+        await Assert.That(sourceFirst.Success).IsTrue();
+        await Assert.That(sourceFirst.Symbol?.CanonicalSignature).IsEqualTo("Sample.App::Sample.App.Consumer");
+        await Assert.That(shortExternal.Success).IsFalse();
+    }
+
+    [Test]
     public async Task ViewIlReturnsMethodInstructions()
     {
         await using var fixture = FixtureWorkspace.Create();

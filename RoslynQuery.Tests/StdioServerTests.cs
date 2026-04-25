@@ -15,6 +15,7 @@ public sealed class StdioServerTests
         var members = await client.CallToolAsync("list_type_members", new { symbol = "Dog" }, CancellationToken.None);
         var usages = await client.CallToolAsync("find_usages", new { symbol = "Dog.Greet" }, CancellationToken.None);
         var il = await client.CallToolAsync("view_il", new { symbol = "Dog.Greet" }, CancellationToken.None);
+        var external = await client.CallToolAsync("describe_symbol", new { symbol = "Sample.External.ExternalThing" }, CancellationToken.None);
 
         await Assert.That(opened).Contains("Loaded solution.", Ordinal);
         await Assert.That(opened).Contains(fixture.SolutionPath, OrdinalIgnoreCase);
@@ -42,6 +43,9 @@ public sealed class StdioServerTests
         await Assert.That(il).DoesNotContain("RVA:", Ordinal);
         await Assert.That(il).DoesNotContain("Implementation:", Ordinal);
         await Assert.That(il).DoesNotContain("Local Signature:", Ordinal);
+        await Assert.That(external).StartsWith("Sample.External::Sample.External.ExternalThing", Ordinal);
+        await Assert.That(external).Contains("Assembly: Sample.External", Ordinal);
+        await Assert.That(external).DoesNotContain("Project: Sample.External", Ordinal);
     }
 
     [Test]

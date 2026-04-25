@@ -103,13 +103,11 @@ static class ToolTextFormatter
         var builder = ZString.CreateStringBuilder();
         try
         {
-            var projectRoot = GetDirectoryPath(symbol.ProjectPath);
+            var projectRoot = GetDirectoryPath(symbol.ProjectPath ?? symbol.AssemblyPath);
 
             builder.Append(symbol.CanonicalSignature);
             builder.Append('\n');
-            builder.Append("Project: ");
-            builder.Append(symbol.Project);
-            builder.Append('\n');
+            AppendSymbolOwner(ref builder, in symbol);
 
             AppendContract(ref builder, in symbol);
             AppendAttributes(ref builder, "Attributes", symbol.Attributes);
@@ -130,6 +128,28 @@ static class ToolTextFormatter
         {
             builder.Dispose();
         }
+    }
+
+    static void AppendSymbolOwner(ref Utf16ValueStringBuilder builder, in SymbolDetail symbol)
+    {
+        if (string.Equals(symbol.Origin, "metadata", StringComparison.Ordinal))
+        {
+            builder.Append("Assembly: ");
+            builder.Append(symbol.Project);
+            builder.Append('\n');
+            if (!string.IsNullOrWhiteSpace(symbol.AssemblyPath))
+            {
+                builder.Append("Assembly Path: ");
+                builder.Append(symbol.AssemblyPath);
+                builder.Append('\n');
+            }
+
+            return;
+        }
+
+        builder.Append("Project: ");
+        builder.Append(symbol.Project);
+        builder.Append('\n');
     }
 
     static void AppendContract(ref Utf16ValueStringBuilder builder, in SymbolDetail symbol)

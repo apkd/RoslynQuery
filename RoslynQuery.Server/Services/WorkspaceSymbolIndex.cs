@@ -9,17 +9,21 @@ sealed class WorkspaceSymbolIndex
     readonly Dictionary<string, SymbolSearchEntry[]> byDisplay;
     readonly Dictionary<string, SymbolSearchEntry[]> bySimpleName;
 
-    WorkspaceSymbolIndex(SymbolSearchEntry[] entries)
+    WorkspaceSymbolIndex(SymbolSearchEntry[] entries, ExternalMetadataIndex externalMetadata)
     {
         this.entries = entries;
+        ExternalMetadata = externalMetadata;
         byCanonical = BuildLookup(entries, static entry => entry.CanonicalSignature);
         byDisplay = BuildLookup(entries, static entry => entry.DisplaySignature);
         bySimpleName = BuildLookup(entries, static entry => entry.ShortName);
     }
 
+    public ExternalMetadataIndex ExternalMetadata { get; }
+
     public static async Task<WorkspaceSymbolIndex> BuildAsync(Solution solution, CancellationToken ct)
     {
         var entries = new List<SymbolSearchEntry>();
+        var externalMetadata = new ExternalMetadataIndex.Builder();
 
         foreach (var project in solution.Projects)
         {
@@ -31,13 +35,14 @@ sealed class WorkspaceSymbolIndex
                 continue;
 
             CollectNamespace(project, compilation.Assembly.GlobalNamespace, entries);
+            externalMetadata.Add(compilation);
         }
 
         return new(entries
             .AsValueEnumerable()
             .OrderBy(static entry => entry.Kind, StringComparer.OrdinalIgnoreCase)
             .ThenBy(static entry => entry.DisplaySignature, StringComparer.OrdinalIgnoreCase)
-            .ToArray());
+            .ToArray(), externalMetadata.Build());
     }
 
     public SymbolResolution Resolve(string query, string? kindFilter = null)
@@ -80,6 +85,9 @@ sealed class WorkspaceSymbolIndex
 
     public SymbolSearchEntry? TryGetBySymbol(ISymbol symbol)
         => entries.AsValueEnumerable().FirstOrDefault(entry => SymbolEqualityComparer.Default.Equals(entry.Symbol, symbol));
+
+    public SymbolSearchEntry GetOrCreateEntry(ISymbol symbol)
+        => TryGetBySymbol(symbol) ?? SymbolSearchEntry.CreateMetadata(symbol, ExternalMetadata.TryGetAssemblyPath(symbol));
 
     public static bool ShouldIndexMember(ISymbol symbol)
     {
@@ -200,8 +208,10 @@ sealed class SymbolSearchEntry
         string shortName,
         string kind,
         string? typeKind,
+        string origin,
         string project,
         string? projectPath,
+        string? assemblyPath,
         string? containingNamespace,
         string? containingType,
         SourceLocationInfo[] locations)
@@ -212,8 +222,10 @@ sealed class SymbolSearchEntry
         ShortName = shortName;
         Kind = kind;
         TypeKind = typeKind;
+        Origin = origin;
         Project = project;
         ProjectPath = projectPath;
+        AssemblyPath = assemblyPath;
         ContainingNamespace = containingNamespace;
         ContainingType = containingType;
         Locations = locations;
@@ -231,9 +243,13 @@ sealed class SymbolSearchEntry
 
     public string? TypeKind { get; }
 
+    public string Origin { get; }
+
     public string Project { get; }
 
     public string? ProjectPath { get; }
+
+    public string? AssemblyPath { get; }
 
     public string? ContainingNamespace { get; }
 
@@ -251,8 +267,10 @@ sealed class SymbolSearchEntry
             SymbolText.GetShortName(symbol),
             SymbolText.GetKind(symbol),
             SymbolText.GetTypeKind(symbol),
+            "source",
             project.Name,
             project.FilePath,
+            null,
             SymbolText.GetContainingNamespace(symbol),
             SymbolText.GetContainingType(symbol),
             symbol.Locations
@@ -262,7 +280,7 @@ sealed class SymbolSearchEntry
                 .ToArray());
     }
 
-    public static SymbolSearchEntry CreateMetadata(ISymbol symbol)
+    public static SymbolSearchEntry CreateMetadata(ISymbol symbol, string? assemblyPath = null)
     {
         var displaySignature = SymbolText.GetDisplaySignature(symbol);
         return new(
@@ -272,8 +290,10 @@ sealed class SymbolSearchEntry
             SymbolText.GetShortName(symbol),
             SymbolText.GetKind(symbol),
             SymbolText.GetTypeKind(symbol),
+            "metadata",
             symbol.ContainingAssembly?.Name ?? "metadata",
             null,
+            assemblyPath,
             SymbolText.GetContainingNamespace(symbol),
             SymbolText.GetContainingType(symbol),
             []);
@@ -319,8 +339,10 @@ sealed class SymbolSearchEntry
             ShortName = ShortName,
             Kind = Kind,
             TypeKind = TypeKind,
+            Origin = Origin,
             Project = Project,
             ProjectPath = ProjectPath,
+            AssemblyPath = AssemblyPath,
             ContainingNamespace = ContainingNamespace,
             ContainingType = ContainingType,
             ReturnType = Symbol is IMethodSymbol method && method.MethodKind is not (MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor)

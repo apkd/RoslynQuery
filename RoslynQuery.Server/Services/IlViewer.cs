@@ -76,6 +76,52 @@ static class IlViewer
             : new() { Success = true, Methods = methods };
     }
 
+    public static ViewIlResponse ViewMetadata(SymbolSearchEntry entry, bool compact, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (entry.AssemblyPath is not { Length: > 0 } assemblyPath)
+            return new() { Error = "The symbol's metadata assembly path is unavailable, so IL is unavailable." };
+
+        try
+        {
+            using var stream = File.OpenRead(assemblyPath);
+            using var peReader = new PEReader(stream);
+            var reader = peReader.GetMetadataReader();
+            var options = new IlFormatOptions(compact);
+            var typeSymbol = entry.Symbol.ContainingType;
+            if (typeSymbol is null)
+                return new() { Error = "The symbol is not declared on a type." };
+
+            var typeHandle = FindType(reader, typeSymbol);
+            if (typeHandle.IsNil)
+                return new() { Error = "The symbol's containing type was not found in metadata." };
+
+            var methods = entry.Symbol switch
+            {
+                IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
+                IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),
+                _                              => [],
+            };
+
+            return methods.Length is 0
+                ? new() { Error = "No metadata method body was found for the symbol." }
+                : new() { Success = true, Methods = methods };
+        }
+        catch (FileNotFoundException exception)
+        {
+            return new() { Error = $"The metadata assembly could not be found: {exception.Message}" };
+        }
+        catch (IOException exception)
+        {
+            return new() { Error = $"The metadata assembly could not be read: {exception.Message}" };
+        }
+        catch (BadImageFormatException exception)
+        {
+            return new() { Error = $"The metadata assembly is not a valid PE image: {exception.Message}" };
+        }
+    }
+
     static IlMethodInfo[] BuildMethodInfos(
         MetadataReader reader,
         PEReader peReader,

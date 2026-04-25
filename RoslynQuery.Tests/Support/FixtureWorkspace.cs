@@ -1,4 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace RoslynQuery;
 
@@ -11,6 +14,7 @@ sealed class FixtureWorkspace : IAsyncDisposable
         CoreProjectPath = Path.Combine(rootPath, "src", "Sample.Core", "Sample.Core.csproj");
         AppProjectPath = Path.Combine(rootPath, "src", "Sample.App", "Sample.App.csproj");
         OtherProjectPath = Path.Combine(rootPath, "src", "Sample.Other", "Sample.Other.csproj");
+        ExternalAssemblyPath = Path.Combine(rootPath, "external", "Sample.External.dll");
         ConsumerPath = Path.Combine(rootPath, "src", "Sample.App", "Consumer.cs");
         DogPath = Path.Combine(rootPath, "src", "Sample.Core", "Dog.cs");
     }
@@ -25,6 +29,8 @@ sealed class FixtureWorkspace : IAsyncDisposable
 
     public string OtherProjectPath { get; }
 
+    public string ExternalAssemblyPath { get; }
+
     public string ConsumerPath { get; }
 
     public string DogPath { get; }
@@ -34,6 +40,7 @@ sealed class FixtureWorkspace : IAsyncDisposable
         var rootPath = Path.Combine(Path.GetTempPath(), "RoslynQuery", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(rootPath);
 
+        WriteExternalAssembly(Path.Combine(rootPath, "external", "Sample.External.dll"));
         Write(Path.Combine(rootPath, "Sample.slnx"), SampleSolution);
         Write(Path.Combine(rootPath, "src", "Sample.Core", "Sample.Core.csproj"), CoreProject);
         Write(Path.Combine(rootPath, "src", "Sample.Core", "Animal.cs"), AnimalCode);
@@ -99,6 +106,9 @@ sealed class FixtureWorkspace : IAsyncDisposable
           <ItemGroup>
             <ProjectReference Include="..\Sample.Core\Sample.Core.csproj" />
             <ProjectReference Include="..\Sample.Other\Sample.Other.csproj" />
+            <Reference Include="Sample.External">
+              <HintPath>..\..\external\Sample.External.dll</HintPath>
+            </Reference>
           </ItemGroup>
         </Project>
         """;
@@ -200,18 +210,22 @@ sealed class FixtureWorkspace : IAsyncDisposable
 
     const string ConsumerCode = """
         using Sample.Core;
+        using Sample.External;
 
         namespace Sample.App;
 
-        public sealed class Consumer
+        public sealed class Consumer : IExternalGreeter
         {
             public string Run()
             {
                 var dog = new Dog();
                 var widget = new Widget();
+                var external = new ExternalThing();
                 widget.Build(dog.Overload(2));
-                return new Sample.Other.Models.Widget().Name + dog.Greet(dog.Speak()) + widget.Count;
+                return external.Compute(2).ToString() + new Sample.Other.Models.Widget().Name + dog.Greet(dog.Speak()) + widget.Count;
             }
+
+            public string Format(string name) => new ExternalThing().Echo(name);
         }
         """;
 
@@ -223,4 +237,67 @@ sealed class FixtureWorkspace : IAsyncDisposable
             public string Name => "other";
         }
         """;
+
+    const string ExternalAssemblyCode = """
+        namespace Sample.External;
+
+        public interface IExternalGreeter
+        {
+            string Format(string name);
+        }
+
+        public class ExternalThing
+        {
+            public int Compute(int value) => value + 42;
+
+            public string Echo(string value) => value;
+
+            public string Name => "external";
+        }
+
+        public sealed class Consumer
+        {
+            public string Name => "metadata";
+        }
+        """;
+
+    static void WriteExternalAssembly(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var references = GetReferenceAssemblyPaths()
+            .Select(static path => MetadataReference.CreateFromFile(path))
+            .ToArray();
+
+        var compilation = CSharpCompilation.Create(
+            "Sample.External",
+            [CSharpSyntaxTree.ParseText(ExternalAssemblyCode)],
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+
+        var result = compilation.Emit(path);
+        if (result.Success)
+            return;
+
+        var diagnostics = string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()));
+        throw new InvalidOperationException("Failed to emit fixture metadata assembly:" + Environment.NewLine + diagnostics);
+    }
+
+    static string[] GetReferenceAssemblyPaths()
+    {
+        var runtimeDirectory = RuntimeEnvironment.GetRuntimeDirectory();
+        var dotnetRoot = Directory.GetParent(runtimeDirectory)?.Parent?.Parent?.Parent?.FullName
+            ?? throw new InvalidOperationException("Could not locate the dotnet root from the runtime directory.");
+        var packRoot = Path.Combine(dotnetRoot, "packs", "Microsoft.NETCore.App.Ref");
+        var refDirectory = Directory.GetDirectories(packRoot)
+            .Select(static path => (
+                Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : new Version(0, 0),
+                Path: Path.Combine(path, "ref", "net10.0")))
+            .Where(static item => Directory.Exists(item.Path))
+            .OrderByDescending(static item => item.Version)
+            .Select(static item => item.Path)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException("Could not locate the .NET 10 reference assemblies.");
+
+        return Directory.GetFiles(refDirectory, "*.dll");
+    }
 }

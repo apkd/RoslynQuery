@@ -102,8 +102,10 @@ public readonly record struct SymbolSummary()
     public string ShortName { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
     public string? TypeKind { get; init; }
+    public string Origin { get; init; } = string.Empty;
     public string Project { get; init; } = string.Empty;
     public string? ProjectPath { get; init; }
+    public string? AssemblyPath { get; init; }
     public string? ContainingNamespace { get; init; }
     public string? ContainingType { get; init; }
     public string? ReturnType { get; init; }
@@ -118,8 +120,10 @@ public readonly record struct SymbolDetail()
     public string ShortName { get; init; } = string.Empty;
     public string Kind { get; init; } = string.Empty;
     public string? TypeKind { get; init; }
+    public string Origin { get; init; } = string.Empty;
     public string Project { get; init; } = string.Empty;
     public string? ProjectPath { get; init; }
+    public string? AssemblyPath { get; init; }
     public string? ContainingNamespace { get; init; }
     public string? ContainingType { get; init; }
     public string? Accessibility { get; init; }
