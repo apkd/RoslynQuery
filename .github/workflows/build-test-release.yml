@@ -293,7 +293,7 @@ jobs:
           prev_tag="${{ needs.version.outputs.previous_tag }}"
           ref="${{ needs.prepare.outputs.ref }}"
 
-          cat > "$notes" <<MD
+          cat > "$notes" <<'MD'
 
           This is a rolling release. Whenever all tests pass, it is automatically updated
           to point to the latest release tag.
