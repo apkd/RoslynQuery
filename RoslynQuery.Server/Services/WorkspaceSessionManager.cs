@@ -51,15 +51,17 @@ public sealed class WorkspaceSessionManager
         }
     }
 
-    public async Task<OpenWorkspaceResponse> LoadAsync(string path, CancellationToken ct)
+    public async Task<OpenWorkspaceResponse> LoadAsync(string? path, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(path))
+        {
             return new()
             {
-                RequestedPath = path ?? string.Empty,
+                RequestedPath = path ?? "",
                 Error = "Path is required.",
                 Status = await BuildStatusAsync(activeSession, ct),
             };
+        }
 
         await gate.WaitAsync(ct);
         try
