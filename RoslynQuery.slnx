@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="RoslynQuery.Server/RoslynQuery.Server.csproj" />
+  <Project Path="RoslynQuery.Tests/RoslynQuery.Tests.csproj" />
+</Solution>
