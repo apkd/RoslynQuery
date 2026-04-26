@@ -61,6 +61,7 @@ sealed class McpTestClient : IAsyncDisposable
                 lock (client.stderrLines)
                     client.stderrLines.Add(args.Data);
         };
+
         process.BeginErrorReadLine();
 
         await client.SendRequestAsync(
@@ -75,7 +76,8 @@ sealed class McpTestClient : IAsyncDisposable
                     ["version"] = "dev",
                 },
             },
-            ct);
+            ct
+        );
 
         await client.SendMessageAsync(
             new JsonObject
@@ -84,7 +86,8 @@ sealed class McpTestClient : IAsyncDisposable
                 ["method"] = "notifications/initialized",
                 ["params"] = null,
             },
-            ct);
+            ct
+        );
 
         return client;
     }
@@ -98,7 +101,8 @@ sealed class McpTestClient : IAsyncDisposable
                 ["name"] = name,
                 ["arguments"] = JsonSerializer.SerializeToNode(arguments),
             },
-            ct);
+            ct
+        );
 
         if (response["result"]?["content"]?[0]?["text"]?.GetValue<string>() is { Length: > 0 } textContent)
             return textContent;
@@ -133,7 +137,8 @@ sealed class McpTestClient : IAsyncDisposable
                 ["method"] = method,
                 ["params"] = @params,
             },
-            ct);
+            ct
+        );
 
         while (true)
         {
@@ -159,8 +164,8 @@ sealed class McpTestClient : IAsyncDisposable
             {
                 lock (stderrLines)
                     throw new EndOfStreamException(
-                        "Unexpected EOF while reading MCP messages.\n"
-                        + (stderrLines.Count == 0 ? string.Empty : string.Join("\n", stderrLines)));
+                        $"Unexpected EOF while reading MCP messages.\n{(stderrLines.Count == 0 ? string.Empty : string.Join("\n", stderrLines))}"
+                    );
             }
 
             if (line.Length == 0)

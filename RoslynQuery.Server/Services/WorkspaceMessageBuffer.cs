@@ -20,7 +20,8 @@ sealed class WorkspaceMessageBuffer
 
         TryAdd(
             diagnostic.Kind == WorkspaceDiagnosticKind.Failure ? "error" : "warning",
-            diagnostic.Message);
+            diagnostic.Message
+        );
     }
 
     internal bool TryAdd(string severity, string message)
@@ -29,11 +30,14 @@ sealed class WorkspaceMessageBuffer
         if (onceKey is not null && !loggedOnceMessageKeys.TryAdd(onceKey, 0))
             return false;
 
-        messages.Enqueue(new()
-        {
-            Severity = severity,
-            Message = message,
-        });
+        messages.Enqueue(
+            new()
+            {
+                Severity = severity,
+                Message = message,
+            }
+        );
+
         return true;
     }
 
@@ -48,7 +52,7 @@ sealed class WorkspaceMessageBuffer
 
     static string? GetOnceKey(string severity, string message)
         => string.Equals(severity, "warning", StringComparison.Ordinal)
-        && message.Contains(MissingVisualStudioBuildToolsWarning, StringComparison.Ordinal)
+           && message.Contains(MissingVisualStudioBuildToolsWarning, StringComparison.Ordinal)
             ? MissingVisualStudioBuildToolsWarning
             : null;
 }

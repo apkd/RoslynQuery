@@ -81,7 +81,7 @@ static class WorkspaceTargetResolver
     static string[] EnumerateCandidates(string root, string extension, bool recurseSubdirectories = true)
         => Directory.EnumerateFiles(
                 path: root,
-                searchPattern: "*" + extension,
+                searchPattern: $"*{extension}",
                 enumerationOptions: new()
                 {
                     RecurseSubdirectories = recurseSubdirectories,

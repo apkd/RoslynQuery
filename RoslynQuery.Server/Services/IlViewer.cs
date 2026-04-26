@@ -5,6 +5,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using Cysharp.Text;
 using Microsoft.CodeAnalysis;
 using static System.StringComparison;
 
@@ -396,15 +397,37 @@ static class IlViewer
 
     static string FormatExceptionRegion(MetadataReader reader, ExceptionRegion region, IlFormatOptions options)
     {
-        var text = $"{region.Kind}: try {FormatIlOffset(region.TryOffset)}..{FormatIlOffset(region.TryOffset + region.TryLength)}, handler {FormatIlOffset(region.HandlerOffset)}..{FormatIlOffset(region.HandlerOffset + region.HandlerLength)}";
+        var builder = ZString.CreateStringBuilder();
+        try
+        {
+            builder.Append(region.Kind);
+            builder.Append(": try ");
+            builder.Append(FormatIlOffset(region.TryOffset));
+            builder.Append("..");
+            builder.Append(FormatIlOffset(region.TryOffset + region.TryLength));
+            builder.Append(", handler ");
+            builder.Append(FormatIlOffset(region.HandlerOffset));
+            builder.Append("..");
+            builder.Append(FormatIlOffset(region.HandlerOffset + region.HandlerLength));
 
-        if (region is { Kind: ExceptionRegionKind.Catch, CatchType.IsNil: false })
-            text += $" catch {ResolveEntityHandle(reader, region.CatchType, options)}";
+            if (region is { Kind: ExceptionRegionKind.Catch, CatchType.IsNil: false })
+            {
+                builder.Append(" catch ");
+                builder.Append(ResolveEntityHandle(reader, region.CatchType, options));
+            }
 
-        if (region.Kind is ExceptionRegionKind.Filter)
-            text += $" filter {FormatIlOffset(region.FilterOffset)}";
+            if (region.Kind is ExceptionRegionKind.Filter)
+            {
+                builder.Append(" filter ");
+                builder.Append(FormatIlOffset(region.FilterOffset));
+            }
 
-        return text;
+            return builder.ToString();
+        }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     static string ResolveEntityHandle(MetadataReader reader, EntityHandle handle, IlFormatOptions options)
@@ -428,8 +451,7 @@ static class IlViewer
     static string GetMethodName(MetadataReader reader, MethodDefinitionHandle handle, IlFormatOptions options)
     {
         var method = reader.GetMethodDefinition(handle);
-        return GetMethodDefinitionName(reader, handle, includeGenericParameterNames: true, options)
-               + FormatMethodSignature(DecodeMethodSignature(method, IlSignatureContext.Create(options)));
+        return $"{GetMethodDefinitionName(reader, handle, includeGenericParameterNames: true, options)}{FormatMethodSignature(DecodeMethodSignature(method, IlSignatureContext.Create(options)))}";
     }
 
     static string GetMemberReferenceName(MetadataReader reader, MemberReferenceHandle handle, IlFormatOptions options)
@@ -439,7 +461,7 @@ static class IlViewer
         if (member.GetKind() is not MemberReferenceKind.Method)
             return name;
 
-        return name + FormatMethodSignature(DecodeMethodSignature(member, IlSignatureContext.Create(options)));
+        return $"{name}{FormatMethodSignature(DecodeMethodSignature(member, IlSignatureContext.Create(options)))}";
     }
 
     static string GetMethodSpecificationName(MetadataReader reader, MethodSpecificationHandle handle, IlFormatOptions options)
@@ -452,11 +474,13 @@ static class IlViewer
             HandleKind.MethodDefinition => FormatMethodSpecification(
                 GetMethodDefinitionName(reader, (MethodDefinitionHandle)specification.Method, includeGenericParameterNames: false, options),
                 arguments,
-                DecodeMethodSignature(reader.GetMethodDefinition((MethodDefinitionHandle)specification.Method), context)),
+                DecodeMethodSignature(reader.GetMethodDefinition((MethodDefinitionHandle)specification.Method), context)
+            ),
             HandleKind.MemberReference => FormatMethodSpecification(
                 GetMemberReferenceNameCore(reader, reader.GetMemberReference((MemberReferenceHandle)specification.Method), options),
                 arguments,
-                DecodeMethodSignature(reader.GetMemberReference((MemberReferenceHandle)specification.Method), context)),
+                DecodeMethodSignature(reader.GetMemberReference((MemberReferenceHandle)specification.Method), context)
+            ),
             _ => $"{ResolveEntityHandle(reader, specification.Method, options)}{FormatMethodArguments(arguments)}",
         };
     }
@@ -471,7 +495,7 @@ static class IlViewer
         var method = reader.GetMethodDefinition(handle);
         var name = $"{GetTypeMetadataFullName(reader, method.GetDeclaringType(), options)}{GetMemberSeparator(options)}{reader.GetString(method.Name)}";
         return includeGenericParameterNames
-            ? name + FormatGenericParameters(reader, method.GetGenericParameters())
+            ? $"{name}{FormatGenericParameters(reader, method.GetGenericParameters())}"
             : name;
     }
 
@@ -531,7 +555,7 @@ static class IlViewer
         ImmutableArray<string> arguments,
         MethodSignature<string>? signature
     )
-        => name + FormatMethodArguments(arguments) + FormatMethodSignature(signature);
+        => $"{name}{FormatMethodArguments(arguments)}{FormatMethodSignature(signature)}";
 
     static string FormatGenericParameters(MetadataReader reader, GenericParameterHandleCollection handles)
     {

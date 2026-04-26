@@ -39,10 +39,7 @@ rootCommand.SetAction(async parseResult =>
 
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
-        builder.Logging.AddZLoggerConsole(options =>
-        {
-            options.LogToStandardErrorThreshold = LogLevel.Trace;
-        });
+        builder.Logging.AddZLoggerConsole(options => { options.LogToStandardErrorThreshold = LogLevel.Trace; });
         builder.Services.AddSingleton<WorkspaceSessionManager>();
         builder.Services
             .AddMcpServer()
@@ -55,7 +52,8 @@ rootCommand.SetAction(async parseResult =>
                     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
                     TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
                     WriteIndented = true,
-                });
+                }
+            );
 
         await builder.Build().RunAsync();
         return 0;

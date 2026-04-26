@@ -38,6 +38,7 @@ sealed class WorkspaceSymbolIndex
             .AsValueEnumerable()
             .Where(static project => project.Language == LanguageNames.CSharp)
             .ToArray();
+
         var metrics = new SourceIndexBuildMetrics(projects.Length);
 
         var entries = new List<SymbolSearchEntry>();
@@ -257,7 +258,7 @@ sealed class WorkspaceSymbolIndex
             AssemblyPath = GetAssemblyPath(entry),
             ContainingNamespace = SymbolText.GetContainingNamespace(symbol),
             ContainingType = SymbolText.GetContainingType(symbol),
-            ReturnType = symbol is IMethodSymbol method && method.MethodKind is not (MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor)
+            ReturnType = symbol is IMethodSymbol { MethodKind: not (MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor) } method
                 ? SymbolText.GetTypeDisplay(method.ReturnType)
                 : null,
             ValueType = symbol switch
@@ -680,7 +681,8 @@ readonly record struct SymbolSearchEntry(
 
     static (string DisplaySignature, int ShortNameStart, int ShortNameLength, SymbolSearchKind Kind) BuildSearchInfo(
         ISymbol symbol,
-        ProjectIndexBuildStats? stats = null)
+        ProjectIndexBuildStats? stats = null
+    )
     {
         var displayStarted = Stopwatch.GetTimestamp();
         var displaySignature = SymbolText.GetDisplaySignature(symbol);
@@ -781,8 +783,8 @@ readonly record struct SymbolSearchEntry(
     static SymbolSearchKind GetSearchKind(ISymbol symbol)
         => symbol switch
         {
-            INamespaceSymbol                                   => SymbolSearchKind.Namespace,
-            INamedTypeSymbol namedType when namedType.IsRecord => SymbolSearchKind.Record,
+            INamespaceSymbol                    => SymbolSearchKind.Namespace,
+            INamedTypeSymbol { IsRecord: true } => SymbolSearchKind.Record,
             INamedTypeSymbol namedType => namedType.TypeKind switch
             {
                 Microsoft.CodeAnalysis.TypeKind.Class     => SymbolSearchKind.Class,
@@ -801,11 +803,11 @@ readonly record struct SymbolSearchEntry(
                 MethodKind.Destructor          => SymbolSearchKind.Destructor,
                 _                              => SymbolSearchKind.Method,
             },
-            IPropertySymbol property when property.IsIndexer => SymbolSearchKind.Indexer,
-            IPropertySymbol                                  => SymbolSearchKind.Property,
-            IFieldSymbol                                     => SymbolSearchKind.Field,
-            IEventSymbol                                     => SymbolSearchKind.Event,
-            _                                                => SymbolSearchKind.Other,
+            IPropertySymbol { IsIndexer: true } => SymbolSearchKind.Indexer,
+            IPropertySymbol                     => SymbolSearchKind.Property,
+            IFieldSymbol                        => SymbolSearchKind.Field,
+            IEventSymbol                        => SymbolSearchKind.Event,
+            _                                   => SymbolSearchKind.Other,
         };
 
     static string GetKind(SymbolSearchKind kind)

@@ -1,7 +1,8 @@
 using System.Globalization;
-using System.Text;
 using System.Xml.Linq;
+using Cysharp.Text;
 using Microsoft.CodeAnalysis;
+using static System.StringComparison;
 
 namespace RoslynQuery;
 
@@ -32,37 +33,39 @@ static class SymbolFactory
             IsSealed = SymbolText.IsSealed(symbol),
             ReturnType = symbol is IMethodSymbol returnTypeMethod ? SymbolText.GetTypeDisplay(returnTypeMethod.ReturnType) : null,
             ReturnRefKind = symbol is IMethodSymbol returnRefMethod ? FormatReturnRefKind(returnRefMethod.RefKind) : null,
-            ReturnNullableAnnotation = symbol is IMethodSymbol returnNullableMethod
-                ? FormatNullableAnnotation(returnNullableMethod.ReturnType, returnNullableMethod.ReturnNullableAnnotation)
-                : null,
+            ReturnNullableAnnotation = symbol switch
+            {
+                IMethodSymbol method => FormatNullableAnnotation(method.ReturnType, method.ReturnNullableAnnotation),
+                _                    => null,
+            },
             ValueType = symbol switch
             {
                 IPropertySymbol property => SymbolText.GetTypeDisplay(property.Type),
-                IFieldSymbol field => SymbolText.GetTypeDisplay(field.Type),
-                IEventSymbol @event => SymbolText.GetTypeDisplay(@event.Type),
-                _ => null,
+                IFieldSymbol field       => SymbolText.GetTypeDisplay(field.Type),
+                IEventSymbol @event      => SymbolText.GetTypeDisplay(@event.Type),
+                _                        => null,
             },
             ValueRefKind = symbol switch
             {
                 IPropertySymbol property => FormatReturnRefKind(property.RefKind),
-                IFieldSymbol field => FormatReturnRefKind(field.RefKind),
-                _ => null,
+                IFieldSymbol field       => FormatReturnRefKind(field.RefKind),
+                _                        => null,
             },
             ValueNullableAnnotation = symbol switch
             {
                 IPropertySymbol property => FormatNullableAnnotation(property.Type, property.Type.NullableAnnotation),
-                IFieldSymbol field => FormatNullableAnnotation(field.Type, field.NullableAnnotation),
-                IEventSymbol @event => FormatNullableAnnotation(@event.Type, @event.NullableAnnotation),
-                _ => null,
+                IFieldSymbol field       => FormatNullableAnnotation(field.Type, field.NullableAnnotation),
+                IEventSymbol @event      => FormatNullableAnnotation(@event.Type, @event.NullableAnnotation),
+                _                        => null,
             },
             Attributes = ToAttributes(symbol.GetAttributes()),
             ReturnAttributes = symbol is IMethodSymbol returnAttributeMethod ? ToAttributes(returnAttributeMethod.GetReturnTypeAttributes()) : [],
             TypeParameters = ToTypeParameters(symbol),
             Parameters = symbol switch
             {
-                IMethodSymbol parameterMethod => parameterMethod.Parameters.AsValueEnumerable().Select(ToParameter).ToArray(),
+                IMethodSymbol parameterMethod                => parameterMethod.Parameters.AsValueEnumerable().Select(ToParameter).ToArray(),
                 IPropertySymbol { IsIndexer: true } property => property.Parameters.AsValueEnumerable().Select(ToParameter).ToArray(),
-                _ => [],
+                _                                            => [],
             },
             Accessors = ToAccessors(symbol),
             Characteristics = GetCharacteristics(symbol),
@@ -106,9 +109,9 @@ static class SymbolFactory
     static TypeParameterInfo[] ToTypeParameters(ISymbol symbol)
         => symbol switch
         {
-            INamedTypeSymbol namedType => namedType.TypeParameters.AsValueEnumerable().Select(ToTypeParameter).ToArray(),
+            INamedTypeSymbol namedType  => namedType.TypeParameters.AsValueEnumerable().Select(ToTypeParameter).ToArray(),
             IMethodSymbol genericMethod => genericMethod.TypeParameters.AsValueEnumerable().Select(ToTypeParameter).ToArray(),
-            _ => [],
+            _                           => [],
         };
 
     static TypeParameterInfo ToTypeParameter(ITypeParameterSymbol symbol)
@@ -140,7 +143,7 @@ static class SymbolFactory
             if (i < symbol.ConstraintNullableAnnotations.Length
                 && symbol.ConstraintNullableAnnotations[i] == NullableAnnotation.Annotated
                 && !display.Contains('?'))
-                display += "?";
+                display = $"{display}?";
 
             constraints.Add(display);
         }
@@ -178,13 +181,15 @@ static class SymbolFactory
             if (accessor is null)
                 return;
 
-            accessors.Add(new()
-            {
-                Kind = kind,
-                Accessibility = SymbolText.GetAccessibility(accessor),
-                Characteristics = GetAccessorCharacteristics(accessor),
-                Attributes = ToAttributes(accessor.GetAttributes()),
-            });
+            accessors.Add(
+                new()
+                {
+                    Kind = kind,
+                    Accessibility = SymbolText.GetAccessibility(accessor),
+                    Characteristics = GetAccessorCharacteristics(accessor),
+                    Attributes = ToAttributes(accessor.GetAttributes()),
+                }
+            );
         }
     }
 
@@ -209,83 +214,115 @@ static class SymbolFactory
         switch (symbol)
         {
             case INamedTypeSymbol namedType:
+            {
                 if (namedType.IsFileLocal)
                     characteristics.Add("file-local");
+
                 if (namedType.IsComImport)
                     characteristics.Add("com-import");
+
                 if (namedType.IsSerializable)
                     characteristics.Add("serializable");
+
                 if (namedType.IsExtension)
                     characteristics.Add("extension block");
-                break;
 
+                break;
+            }
             case IMethodSymbol method:
+            {
                 if (method.IsAsync)
                     characteristics.Add("async");
+
                 if (method.IsIterator)
                     characteristics.Add("iterator");
+
                 if (method.IsExtensionMethod)
                     characteristics.Add("extension method");
+
                 if (method.IsConditional)
                     characteristics.Add("conditional");
+
                 if (method.IsVararg)
                     characteristics.Add("vararg");
+
                 if (method.IsReadOnly)
                     characteristics.Add("readonly");
+
                 if (method.IsCheckedBuiltin)
                     characteristics.Add("checked builtin");
+
                 if (method.HidesBaseMethodsByName)
                     characteristics.Add("hides base methods by name");
+
                 if (method.PartialImplementationPart is not null || method.IsPartialDefinition)
                     characteristics.Add("partial definition");
+
                 if (method.PartialDefinitionPart is not null)
                     characteristics.Add("partial implementation");
+
                 if (method.GetDllImportData() is { } dllImport)
                     characteristics.Add($"dllimport {dllImport.ModuleName}");
 
                 AddExplicitImplementations(characteristics, method.ExplicitInterfaceImplementations);
                 break;
-
+            }
             case IPropertySymbol property:
+            {
                 if (property.IsReadOnly)
                     characteristics.Add("read-only");
+
                 if (property.IsWriteOnly)
                     characteristics.Add("write-only");
+
                 if (property.IsRequired)
                     characteristics.Add("required");
+
                 if (property.IsWithEvents)
                     characteristics.Add("with-events");
+
                 if (property.PartialImplementationPart is not null || property.IsPartialDefinition)
                     characteristics.Add("partial definition");
+
                 if (property.PartialDefinitionPart is not null)
                     characteristics.Add("partial implementation");
 
                 AddExplicitImplementations(characteristics, property.ExplicitInterfaceImplementations);
                 break;
-
+            }
             case IFieldSymbol field:
+            {
                 if (field.IsConst)
                     characteristics.Add("const");
+
                 if (field.IsReadOnly)
                     characteristics.Add("readonly");
+
                 if (field.IsVolatile)
                     characteristics.Add("volatile");
+
                 if (field.IsRequired)
                     characteristics.Add("required");
+
                 if (field.IsFixedSizeBuffer)
                     characteristics.Add($"fixed-size buffer ({field.FixedSize})");
-                break;
 
+                break;
+            }
             case IEventSymbol @event:
+            {
                 if (@event.IsWindowsRuntimeEvent)
                     characteristics.Add("windows-runtime");
+
                 if (@event.PartialImplementationPart is not null || @event.IsPartialDefinition)
                     characteristics.Add("partial definition");
+
                 if (@event.PartialDefinitionPart is not null)
                     characteristics.Add("partial implementation");
 
                 AddExplicitImplementations(characteristics, @event.ExplicitInterfaceImplementations);
                 break;
+            }
         }
 
         return characteristics.ToArray();
@@ -293,10 +330,7 @@ static class SymbolFactory
 
     static void AddExplicitImplementations<TSymbol>(List<string> characteristics, IEnumerable<TSymbol> symbols)
         where TSymbol : ISymbol
-    {
-        foreach (var symbol in symbols)
-            characteristics.Add("implements " + SymbolText.GetDisplaySignature(symbol));
-    }
+        => characteristics.AddRange(symbols.Select(symbol => $"implements {SymbolText.GetDisplaySignature(symbol)}"));
 
     static string? GetConstantValue(ISymbol symbol)
         => symbol is IFieldSymbol { HasConstantValue: true } field
@@ -308,39 +342,46 @@ static class SymbolFactory
 
     static string FormatAttribute(AttributeData attribute)
     {
-        var builder = new StringBuilder();
-        builder.Append(attribute.AttributeClass is null ? attribute.ToString() : SymbolText.GetTypeDisplay(attribute.AttributeClass));
+        var builder = ZString.CreateStringBuilder();
+        try
+        {
+            builder.Append(attribute.AttributeClass is null ? attribute.ToString() ?? string.Empty : SymbolText.GetTypeDisplay(attribute.AttributeClass));
 
-        var hasConstructorArguments = !attribute.ConstructorArguments.IsDefaultOrEmpty;
-        var hasNamedArguments = !attribute.NamedArguments.IsDefaultOrEmpty;
-        if (!hasConstructorArguments && !hasNamedArguments)
+            var hasConstructorArguments = !attribute.ConstructorArguments.IsDefaultOrEmpty;
+            var hasNamedArguments = !attribute.NamedArguments.IsDefaultOrEmpty;
+            if (!hasConstructorArguments && !hasNamedArguments)
+                return builder.ToString();
+
+            builder.Append('(');
+            var appendedAny = false;
+
+            foreach (var argument in attribute.ConstructorArguments)
+            {
+                if (appendedAny)
+                    builder.Append(", ");
+
+                builder.Append(FormatTypedConstant(argument));
+                appendedAny = true;
+            }
+
+            foreach (var argument in attribute.NamedArguments)
+            {
+                if (appendedAny)
+                    builder.Append(", ");
+
+                builder.Append(argument.Key);
+                builder.Append(" = ");
+                builder.Append(FormatTypedConstant(argument.Value));
+                appendedAny = true;
+            }
+
+            builder.Append(')');
             return builder.ToString();
-
-        builder.Append('(');
-        var appendedAny = false;
-
-        foreach (var argument in attribute.ConstructorArguments)
-        {
-            if (appendedAny)
-                builder.Append(", ");
-
-            builder.Append(FormatTypedConstant(argument));
-            appendedAny = true;
         }
-
-        foreach (var argument in attribute.NamedArguments)
+        finally
         {
-            if (appendedAny)
-                builder.Append(", ");
-
-            builder.Append(argument.Key);
-            builder.Append(" = ");
-            builder.Append(FormatTypedConstant(argument.Value));
-            appendedAny = true;
+            builder.Dispose();
         }
-
-        builder.Append(')');
-        return builder.ToString();
     }
 
     static string FormatTypedConstant(TypedConstant constant)
@@ -349,10 +390,10 @@ static class SymbolFactory
             return "null";
 
         if (constant.Kind == TypedConstantKind.Array)
-            return "[" + string.Join(", ", constant.Values.AsValueEnumerable().Select(FormatTypedConstant).ToArray()) + "]";
+            return $"[{string.Join(", ", constant.Values.AsValueEnumerable().Select(FormatTypedConstant).ToArray())}]";
 
-        if (constant.Kind == TypedConstantKind.Type && constant.Value is ITypeSymbol type)
-            return "typeof(" + SymbolText.GetTypeDisplay(type) + ")";
+        if (constant is { Kind: TypedConstantKind.Type, Value: ITypeSymbol type })
+            return $"typeof({SymbolText.GetTypeDisplay(type)})";
 
         return FormatConstant(constant.Value);
     }
@@ -360,21 +401,21 @@ static class SymbolFactory
     static string FormatConstant(object? value)
         => value switch
         {
-            null => "null",
-            string text => "\"" + EscapeString(text) + "\"",
-            char character => "'" + EscapeChar(character) + "'",
-            bool boolean => boolean ? "true" : "false",
+            null                     => "null",
+            string text              => $"\"{EscapeString(text)}\"",
+            char character           => $"'{EscapeChar(character)}'",
+            bool boolean             => boolean ? "true" : "false",
             IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-            _ => value.ToString() ?? string.Empty,
+            _                        => value.ToString() ?? string.Empty,
         };
 
     static string EscapeString(string value)
         => value
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\"", "\\\"", StringComparison.Ordinal)
-            .Replace("\r", "\\r", StringComparison.Ordinal)
-            .Replace("\n", "\\n", StringComparison.Ordinal)
-            .Replace("\t", "\\t", StringComparison.Ordinal);
+            .Replace("\\", "\\\\", Ordinal)
+            .Replace("\"", "\\\"", Ordinal)
+            .Replace("\r", "\\r", Ordinal)
+            .Replace("\n", "\\n", Ordinal)
+            .Replace("\t", "\\t", Ordinal);
 
     static string EscapeChar(char value)
         => value switch
@@ -384,44 +425,44 @@ static class SymbolFactory
             '\r' => "\\r",
             '\n' => "\\n",
             '\t' => "\\t",
-            _ => value.ToString(),
+            _    => value.ToString(),
         };
 
     static string? FormatParameterRefKind(RefKind refKind)
         => refKind switch
         {
             RefKind.None => null,
-            RefKind.Ref => "ref",
-            RefKind.Out => "out",
-            RefKind.In => "in",
-            _ => refKind.ToString().ToLowerInvariant(),
+            RefKind.Ref  => "ref",
+            RefKind.Out  => "out",
+            RefKind.In   => "in",
+            _            => refKind.ToString().ToLowerInvariant(),
         };
 
     static string? FormatReturnRefKind(RefKind refKind)
         => refKind switch
         {
             RefKind.None => null,
-            RefKind.Ref => "ref",
-            RefKind.Out => "out",
-            RefKind.In => "ref readonly",
-            _ => refKind.ToString().ToLowerInvariant(),
+            RefKind.Ref  => "ref",
+            RefKind.Out  => "out",
+            RefKind.In   => "ref readonly",
+            _            => refKind.ToString().ToLowerInvariant(),
         };
 
     static string? FormatScopedKind(ScopedKind scopedKind)
         => scopedKind switch
         {
-            ScopedKind.None => null,
-            ScopedKind.ScopedRef => "scoped ref",
+            ScopedKind.None        => null,
+            ScopedKind.ScopedRef   => "scoped ref",
             ScopedKind.ScopedValue => "scoped",
-            _ => scopedKind.ToString().ToLowerInvariant(),
+            _                      => scopedKind.ToString().ToLowerInvariant(),
         };
 
     static string? FormatVariance(VarianceKind variance)
         => variance switch
         {
-            VarianceKind.In => "in",
+            VarianceKind.In  => "in",
             VarianceKind.Out => "out",
-            _ => null,
+            _                => null,
         };
 
     static string? FormatNullableAnnotation(ITypeSymbol type, NullableAnnotation annotation)
@@ -432,10 +473,10 @@ static class SymbolFactory
 
         return annotation switch
         {
-            NullableAnnotation.Annotated => "nullable",
+            NullableAnnotation.Annotated    => "nullable",
             NullableAnnotation.NotAnnotated => "not-null",
-            NullableAnnotation.None => "oblivious",
-            _ => null,
+            NullableAnnotation.None         => "oblivious",
+            _                               => null,
         };
     }
 
@@ -455,29 +496,42 @@ static class SymbolFactory
                 switch (node)
                 {
                     case XElement element:
-                        sections.Add(new()
-                        {
-                            Name = element.Name.LocalName,
-                            Attributes = element.Attributes().Select(FormatDocumentationAttribute).ToArray(),
-                            Text = RenderDocumentationContent(element),
-                        });
-                        break;
+                    {
+                        sections.Add(
+                            new()
+                            {
+                                Name = element.Name.LocalName,
+                                Attributes = element.Attributes().Select(FormatDocumentationAttribute).ToArray(),
+                                Text = RenderDocumentationContent(element),
+                            }
+                        );
 
+                        break;
+                    }
                     case XCData data when !string.IsNullOrWhiteSpace(data.Value):
-                        sections.Add(new()
-                        {
-                            Name = "cdata",
-                            Text = NormalizeDocumentationText(data.Value),
-                        });
-                        break;
+                    {
+                        sections.Add(
+                            new()
+                            {
+                                Name = "cdata",
+                                Text = NormalizeDocumentationText(data.Value),
+                            }
+                        );
 
-                    case XText text when !string.IsNullOrWhiteSpace(text.Value):
-                        sections.Add(new()
-                        {
-                            Name = "text",
-                            Text = NormalizeDocumentationText(text.Value),
-                        });
                         break;
+                    }
+                    case XText text when !string.IsNullOrWhiteSpace(text.Value):
+                    {
+                        sections.Add(
+                            new()
+                            {
+                                Name = "text",
+                                Text = NormalizeDocumentationText(text.Value),
+                            }
+                        );
+
+                        break;
+                    }
                 }
             }
 
@@ -485,9 +539,8 @@ static class SymbolFactory
         }
         catch
         {
-            return string.IsNullOrWhiteSpace(xml)
+            return !string.IsNullOrWhiteSpace(xml)
                 ? new()
-                : new()
                 {
                     Sections =
                     [
@@ -497,20 +550,28 @@ static class SymbolFactory
                             Text = NormalizeDocumentationText(xml),
                         },
                     ],
-                };
+                }
+                : new();
         }
     }
 
     static string RenderDocumentationContent(XElement element)
     {
-        var builder = new StringBuilder();
-        foreach (var node in element.Nodes())
-            RenderDocumentationNode(builder, node);
+        var builder = ZString.CreateStringBuilder();
+        try
+        {
+            foreach (var node in element.Nodes())
+                RenderDocumentationNode(ref builder, node);
 
-        return NormalizeDocumentationText(builder.ToString());
+            return NormalizeDocumentationText(builder.ToString());
+        }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
-    static void RenderDocumentationNode(StringBuilder builder, XNode node)
+    static void RenderDocumentationNode(ref Utf16ValueStringBuilder builder, XNode node)
     {
         switch (node)
         {
@@ -539,7 +600,7 @@ static class SymbolFactory
 
                 builder.Append('>');
                 foreach (var child in element.Nodes())
-                    RenderDocumentationNode(builder, child);
+                    RenderDocumentationNode(ref builder, child);
 
                 builder.Append("</");
                 builder.Append(element.Name.LocalName);
@@ -549,30 +610,37 @@ static class SymbolFactory
     }
 
     static string FormatDocumentationAttribute(XAttribute attribute)
-        => attribute.Name + "=\"" + EscapeDocumentationAttribute(attribute.Value) + "\"";
+        => $"{attribute.Name}=\"{EscapeDocumentationAttribute(attribute.Value)}\"";
 
     static string EscapeDocumentationAttribute(string value)
         => value
-            .Replace("&", "&amp;", StringComparison.Ordinal)
-            .Replace("\"", "&quot;", StringComparison.Ordinal)
-            .Replace("<", "&lt;", StringComparison.Ordinal)
-            .Replace(">", "&gt;", StringComparison.Ordinal);
+            .Replace("&", "&amp;", Ordinal)
+            .Replace("\"", "&quot;", Ordinal)
+            .Replace("<", "&lt;", Ordinal)
+            .Replace(">", "&gt;", Ordinal);
 
     static string NormalizeDocumentationText(string value)
     {
-        var builder = new StringBuilder();
-        foreach (var line in value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        var builder = ZString.CreateStringBuilder();
+        try
         {
-            var trimmed = line.AsSpan().Trim();
-            if (trimmed.IsEmpty)
-                continue;
+            foreach (var line in value.Replace("\r\n", "\n", Ordinal).Split('\n'))
+            {
+                var trimmed = line.AsSpan().Trim();
+                if (trimmed.IsEmpty)
+                    continue;
 
-            if (builder.Length > 0)
-                builder.Append(' ');
+                if (builder.Length > 0)
+                    builder.Append(' ');
 
-            builder.Append(trimmed);
+                builder.Append(trimmed);
+            }
+
+            return builder.ToString();
         }
-
-        return builder.ToString();
+        finally
+        {
+            builder.Dispose();
+        }
     }
 }

@@ -49,16 +49,16 @@ public sealed class WorkspaceSessionManagerTests
 
         static object GetActiveSession(WorkspaceSessionManager manager)
             => typeof(WorkspaceSessionManager)
-                .GetField("activeSession", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(manager)!
-            ?? throw new InvalidOperationException("The active session was not set.");
+                   .GetField("activeSession", BindingFlags.Instance | BindingFlags.NonPublic)!
+                   .GetValue(manager)!
+               ?? throw new InvalidOperationException("The active session was not set.");
 
         static Task GetIndexTask(object session)
             => (Task)(typeof(WorkspaceSessionManager).Assembly
-                .GetType("RoslynQuery.WorkspaceSession")!
-                .GetField("indexTask", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(session)!
-            ?? throw new InvalidOperationException("The index task was not created."));
+                          .GetType("RoslynQuery.WorkspaceSession")!
+                          .GetField("indexTask", BindingFlags.Instance | BindingFlags.NonPublic)!
+                          .GetValue(session)!
+                      ?? throw new InvalidOperationException("The index task was not created."));
     }
 
     [Test]
@@ -153,8 +153,8 @@ public sealed class WorkspaceSessionManagerTests
         await Assert.That(genericMethod.Success).IsTrue();
         await Assert.That(genericMethod.Symbol?.TypeParameters).Contains(parameter => parameter.Name == "T" && parameter.Constraints.Contains("notnull"));
         await Assert.That(property.Success).IsTrue();
-        await Assert.That(property.Symbol?.Accessors).Contains(accessor => accessor.Kind == "get" && accessor.Accessibility == "public");
-        await Assert.That(property.Symbol?.Accessors).Contains(accessor => accessor.Kind == "set" && accessor.Accessibility == "private");
+        await Assert.That(property.Symbol?.Accessors).Contains(accessor => accessor is { Kind: "get", Accessibility: "public" });
+        await Assert.That(property.Symbol?.Accessors).Contains(accessor => accessor is { Kind: "set", Accessibility: "private" });
         await Assert.That(ambiguous.Success).IsFalse();
         await Assert.That(ambiguous.Candidates).Count().IsEqualTo(2);
     }
@@ -172,7 +172,8 @@ public sealed class WorkspaceSessionManagerTests
         var relatedMethod = await manager.FindRelatedSymbolsAsync(
             "Dog.Speak",
             ["overridden_members"],
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         await Assert.That(members.Symbol?.CanonicalSignature).IsEqualTo("Sample.Core::Sample.Core.Dog");
         await Assert.That(members.Members).Contains(member => member.DisplaySignature.Contains("Dog.Greet", Ordinal) && member.ReturnType == "string");
@@ -197,7 +198,9 @@ public sealed class WorkspaceSessionManagerTests
         var related = await manager.FindRelatedSymbolsAsync(
             "Sample.External.IExternalGreeter",
             ["implementations"],
-            CancellationToken.None);
+            CancellationToken.None
+        );
+
         var il = await manager.ViewIlAsync("Sample.External.ExternalThing.Compute(int)", CancellationToken.None);
         var stringLength = await manager.DescribeSymbolAsync("string.Length", CancellationToken.None);
         var nested = await manager.DescribeSymbolAsync("Sample.External.ExternalThing.Nested", CancellationToken.None);
@@ -321,7 +324,8 @@ public sealed class WorkspaceSessionManagerTests
                 public override string Speak() => "woof"
             }
             """,
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         var stale = await manager.StatusAsync(CancellationToken.None);
         var reloaded = await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
@@ -337,9 +341,7 @@ public sealed class WorkspaceSessionManagerTests
     public async Task WorkspaceMessagesOnlyRecordVisualStudioBuildToolsWarningOnce()
     {
         var messages = new WorkspaceMessageBuffer();
-        const string warning =
-            "[Microsoft.CodeAnalysis.MSBuild.BuildHostProcessManager] An installation of Visual Studio or the Build Tools for Visual Studio could not be found; "
-            + "A.csproj will be loaded with the .NET Core SDK and may encounter errors.";
+        const string warning = "[Microsoft.CodeAnalysis.MSBuild.BuildHostProcessManager] An installation of Visual Studio or the Build Tools for Visual Studio could not be found; A.csproj will be loaded with the .NET Core SDK and may encounter errors.";
 
         await Assert.That(messages.TryAdd("warning", warning)).IsTrue();
         await Assert.That(messages.TryAdd("warning", warning.Replace("A.csproj", "B.csproj", Ordinal))).IsFalse();

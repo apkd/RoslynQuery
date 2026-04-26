@@ -7,6 +7,7 @@ static class BuildHostExtractor
 {
     const string versionMarkerFileName = ".roslynquery-buildhost-version";
     static readonly Lock gate = new();
+
     static readonly BuildHostSpec[] buildHosts =
     [
         new(
@@ -18,7 +19,8 @@ static class BuildHostExtractor
                 "Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.dll",
                 "Microsoft.CodeAnalysis.Workspaces.MSBuild.BuildHost.runtimeconfig.json",
                 "System.Collections.Immutable.dll",
-            ]),
+            ]
+        ),
         new(
             "BuildHost-net472",
             "RoslynQuery.BuildHostNet472",
@@ -39,7 +41,8 @@ static class BuildHostExtractor
                 "System.Threading.Tasks.Extensions.dll",
                 "System.ValueTuple.dll",
             ],
-            WindowsOnly: true),
+            WindowsOnly: true
+        ),
     ];
 
     static bool ensured;
@@ -59,8 +62,8 @@ static class BuildHostExtractor
     static void EnsurePresentCore()
     {
         var version = typeof(MSBuildWorkspace).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? typeof(MSBuildWorkspace).Assembly.GetName().Version?.ToString()
-            ?? "unknown";
+                      ?? typeof(MSBuildWorkspace).Assembly.GetName().Version?.ToString()
+                      ?? "unknown";
 
         foreach (var buildHost in buildHosts)
             if (!buildHost.WindowsOnly || OperatingSystem.IsWindows())
@@ -95,7 +98,8 @@ static class BuildHostExtractor
         {
             throw new InvalidOperationException(
                 $"Unable to extract the Roslyn build host to '{directoryPath}'. The directory must be writable the first time a workspace is opened.",
-                exception);
+                exception
+            );
         }
     }
 
@@ -112,7 +116,7 @@ static class BuildHostExtractor
     {
         var resourceName = $"{buildHost.ResourcePrefix}.{fileName}";
         using var input = typeof(BuildHostExtractor).Assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Embedded build host resource '{resourceName}' was not found.");
+                          ?? throw new InvalidOperationException($"Embedded build host resource '{resourceName}' was not found.");
 
         var destinationPath = Path.Combine(directoryPath, fileName);
         var temporaryPath = Path.Combine(directoryPath, $"{fileName}.{Environment.ProcessId}.tmp");

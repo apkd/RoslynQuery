@@ -6,8 +6,9 @@ static class RoslynServerMetadata
 {
     public static string GetDisplayVersion()
         => Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion
+               .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+               ?
+               .InformationalVersion
            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
            ?? "0.0.0";
 }

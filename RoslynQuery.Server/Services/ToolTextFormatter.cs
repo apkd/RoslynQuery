@@ -236,7 +236,8 @@ static class ToolTextFormatter
         string? type,
         string? refKind,
         string? nullableAnnotation,
-        string? constantValue)
+        string? constantValue
+    )
     {
         if (string.IsNullOrWhiteSpace(type) && string.IsNullOrWhiteSpace(constantValue))
             return;
@@ -710,10 +711,10 @@ static class ToolTextFormatter
             {
                 var previousCategory = string.Empty;
                 foreach (var member in response.Members
-                    .AsValueEnumerable()
-                    .OrderBy(static member => GetMemberCategoryOrder(member.Kind))
-                    .ThenBy(static member => GetMemberCategory(member.Kind), StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(static member => GetTypeMemberSignature(in member), StringComparer.OrdinalIgnoreCase))
+                             .AsValueEnumerable()
+                             .OrderBy(static member => GetMemberCategoryOrder(member.Kind))
+                             .ThenBy(static member => GetMemberCategory(member.Kind), StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(static member => GetTypeMemberSignature(in member), StringComparer.OrdinalIgnoreCase))
                 {
                     var category = GetMemberCategory(member.Kind);
                     if (!string.Equals(category, previousCategory, StringComparison.Ordinal))
@@ -750,32 +751,32 @@ static class ToolTextFormatter
     static string GetMemberCategory(string kind)
         => kind switch
         {
-            "constructor" => "Constructors",
-            "static_constructor" => "Static constructors",
-            "method" => "Methods",
-            "operator" => "Operators",
-            "conversion" => "Conversions",
-            "destructor" => "Destructors",
-            "property" => "Properties",
-            "indexer" => "Indexers",
-            "field" => "Fields",
-            "event" => "Events",
+            "constructor"                                                                    => "Constructors",
+            "static_constructor"                                                             => "Static constructors",
+            "method"                                                                         => "Methods",
+            "operator"                                                                       => "Operators",
+            "conversion"                                                                     => "Conversions",
+            "destructor"                                                                     => "Destructors",
+            "property"                                                                       => "Properties",
+            "indexer"                                                                        => "Indexers",
+            "field"                                                                          => "Fields",
+            "event"                                                                          => "Events",
             "class" or "interface" or "struct" or "record" or "enum" or "delegate" or "type" => "Types",
-            _ => "Other members",
+            _                                                                                => "Other members",
         };
 
     static int GetMemberCategoryOrder(string kind)
         => kind switch
         {
-            "constructor" or "static_constructor" => 0,
-            "method" => 1,
-            "operator" or "conversion" => 2,
-            "destructor" => 3,
-            "property" or "indexer" => 4,
-            "field" => 5,
-            "event" => 6,
+            "constructor" or "static_constructor"                                            => 0,
+            "method"                                                                         => 1,
+            "operator" or "conversion"                                                       => 2,
+            "destructor"                                                                     => 3,
+            "property" or "indexer"                                                          => 4,
+            "field"                                                                          => 5,
+            "event"                                                                          => 6,
             "class" or "interface" or "struct" or "record" or "enum" or "delegate" or "type" => 7,
-            _ => 8,
+            _                                                                                => 8,
         };
 
     static string GetSimpleMemberSignature(in SymbolSummary member)
@@ -783,9 +784,12 @@ static class ToolTextFormatter
         var signature = member.DisplaySignature;
         if (!string.IsNullOrWhiteSpace(member.ContainingType))
         {
-            var containingTypePrefix = member.ContainingType + ".";
-            if (signature.StartsWith(containingTypePrefix, StringComparison.Ordinal))
-                signature = signature[containingTypePrefix.Length..];
+            var containingType = member.ContainingType.AsSpan();
+            var signatureSpan = signature.AsSpan();
+            if (signatureSpan.StartsWith(containingType, StringComparison.Ordinal)
+                && signatureSpan.Length > containingType.Length
+                && signatureSpan[containingType.Length] == '.')
+                signature = signature[(containingType.Length + 1)..];
         }
 
         var builder = ZString.CreateStringBuilder();
@@ -806,8 +810,8 @@ static class ToolTextFormatter
         var type = member.Kind switch
         {
             "method" or "operator" or "conversion" => member.ReturnType,
-            "property" or "indexer" => member.ValueType,
-            _ => null,
+            "property" or "indexer"                => member.ValueType,
+            _                                      => null,
         };
 
         if (string.IsNullOrWhiteSpace(type))

@@ -60,8 +60,8 @@ sealed class ExternalMetadataIndex
         var current = snapshot;
         var assembly = symbol.ContainingAssembly;
         return current is not null
-            && assembly is not null
-            && current.AssemblyIndexesByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var index)
+               && assembly is not null
+               && current.AssemblyIndexesByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var index)
             ? index
             : -1;
     }
@@ -71,8 +71,8 @@ sealed class ExternalMetadataIndex
         var current = snapshot;
         var assembly = symbol.ContainingAssembly;
         return current is not null
-            && assembly is not null
-            && current.AssemblyPathsByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var path)
+               && assembly is not null
+               && current.AssemblyPathsByIdentity.TryGetValue(GetAssemblyIdentityKey(assembly), out var path)
             ? path
             : null;
     }
@@ -122,7 +122,9 @@ sealed class ExternalMetadataIndex
             entry.DisplaySignature,
             current.Assemblies[entry.ExternalAssemblyIndex].IdentityKey,
             "all",
-            ct);
+            ct
+        );
+
         foreach (var match in matches)
             if (string.Equals(match.Entry.DisplaySignature, entry.DisplaySignature, Ordinal))
                 return match;
@@ -136,7 +138,8 @@ sealed class ExternalMetadataIndex
         string query,
         string? assemblyFilter,
         string kind,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         if (KindMatchesCategory(kind, "type"))
         {
@@ -162,9 +165,10 @@ sealed class ExternalMetadataIndex
         string query,
         string? assemblyFilter,
         string kind,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        foreach (var splitIndex in EnumerateMemberSplitIndexes(query))
+        foreach (var splitIndex in EnumerateMemberSplitIndices(query))
         {
             var typeQuery = query[..splitIndex].Trim();
             var memberQuery = query[(splitIndex + 1)..].Trim();
@@ -180,7 +184,7 @@ sealed class ExternalMetadataIndex
                 continue;
 
             var entries = new List<ResolvedSymbol>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<MetadataSymbolKey>();
             foreach (var type in types)
             foreach (var member in type.Symbol.GetMembers(parsedMember.Name))
             {
@@ -207,7 +211,8 @@ sealed class ExternalMetadataIndex
         Solution solution,
         string query,
         string? assemblyFilter,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var metadataNames = GetTypeMetadataNameCandidates(query);
         var typePathCandidates = GetNamespaceTypePathCandidates(query);
@@ -215,7 +220,7 @@ sealed class ExternalMetadataIndex
             return [];
 
         var results = new List<(INamedTypeSymbol Symbol, int AssemblyIndex)>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<MetadataSymbolKey>();
         var compilationCache = new Dictionary<ProjectId, Compilation?>();
         for (var assemblyIndex = 0; assemblyIndex < current.Assemblies.Length; assemblyIndex++)
         {
@@ -236,14 +241,14 @@ sealed class ExternalMetadataIndex
                 if (symbol is null)
                     continue;
 
-                var key = descriptor.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
+                var key = new MetadataSymbolKey(descriptor.IdentityKey, SymbolText.GetDisplaySignature(symbol));
                 if (seen.Add(key))
                     results.Add((symbol, assemblyIndex));
             }
 
             foreach (var symbol in ResolveTypesByNamespaceTraversal(assembly, typePathCandidates))
             {
-                var key = descriptor.IdentityKey + "\n" + SymbolText.GetDisplaySignature(symbol);
+                var key = new MetadataSymbolKey(descriptor.IdentityKey, SymbolText.GetDisplaySignature(symbol));
                 if (seen.Add(key))
                     results.Add((symbol, assemblyIndex));
             }
@@ -283,7 +288,7 @@ sealed class ExternalMetadataIndex
             return [];
 
         var results = new List<(string Namespace, string TypePath)>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<NamespaceTypePathKey>();
         AddUngatedNamespaceTypePathCandidates(normalized, results, seen);
         return [.. results];
     }
@@ -291,7 +296,7 @@ sealed class ExternalMetadataIndex
     static void AddUngatedNamespaceTypePathCandidates(
         string normalized,
         List<(string Namespace, string TypePath)> results,
-        HashSet<string> seen
+        HashSet<NamespaceTypePathKey> seen
     )
     {
         var separatorIndexes = GetTopLevelTypePathSeparatorIndexes(normalized);
@@ -303,7 +308,7 @@ sealed class ExternalMetadataIndex
             if (namespacePart.Length is 0 || typePath.Length is 0)
                 continue;
 
-            var key = namespacePart + "\n" + typePath;
+            var key = new NamespaceTypePathKey(namespacePart, typePath);
             if (seen.Add(key))
                 results.Add((namespacePart, typePath));
         }
@@ -417,7 +422,7 @@ sealed class ExternalMetadataIndex
             if (metadataTypePath.Length is 0)
                 continue;
 
-            var metadataName = namespacePart + "." + metadataTypePath;
+            var metadataName = $"{namespacePart}.{metadataTypePath}";
             if (seen.Add(metadataName))
                 results.Add(metadataName);
         }
@@ -452,7 +457,7 @@ sealed class ExternalMetadataIndex
     static string? GetAssemblyName(ExternalMetadataSnapshot current, int assemblyIndex)
         => (uint)assemblyIndex < (uint)current.Assemblies.Length ? current.Assemblies[assemblyIndex].Name : null;
 
-    static IEnumerable<int> EnumerateMemberSplitIndexes(string query)
+    static int[] EnumerateMemberSplitIndices(string query)
     {
         var end = query.IndexOf('(');
         if (end < 0)
@@ -473,8 +478,11 @@ sealed class ExternalMetadataIndex
                 indexes.Add(i);
         }
 
-        for (int i = indexes.Count - 1; i >= 0; i--)
-            yield return indexes[i];
+        var reversed = new int[indexes.Count];
+        for (int i = 0; i < indexes.Count; i++)
+            reversed[i] = indexes[indexes.Count - i - 1];
+
+        return reversed;
     }
 
     static bool MemberMatches(ISymbol member, ParsedMemberQuery query)
@@ -785,18 +793,23 @@ sealed class ExternalMetadataIndex
             : (trimmed[..separatorIndex].Trim(), trimmed[(separatorIndex + 2)..].Trim());
     }
 
-    static string GetSymbolKey(ISymbol symbol, SymbolSearchEntry entry)
-        => GetAssemblyIdentityKey(symbol.ContainingAssembly) + "\n" + entry.DisplaySignature;
+    static MetadataSymbolKey GetSymbolKey(ISymbol symbol, SymbolSearchEntry entry)
+        => new(GetAssemblyIdentityKey(symbol.ContainingAssembly), entry.DisplaySignature);
 
     static string GetAssemblyIdentityKey(IAssemblySymbol? assembly)
         => assembly?.Identity.ToString() ?? "";
+
+    readonly record struct MetadataSymbolKey(string AssemblyIdentity, string DisplaySignature);
+
+    readonly record struct NamespaceTypePathKey(string Namespace, string TypePath);
 
     async Task<IAssemblySymbol?> GetAssemblySymbolAsync(
         ExternalMetadataSnapshot current,
         Solution solution,
         int assemblyIndex,
         Dictionary<ProjectId, Compilation?> compilationCache,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         if ((uint)assemblyIndex >= (uint)current.Assemblies.Length)
             return null;
@@ -853,6 +866,7 @@ sealed class ExternalMetadataIndex
         var comparison = OperatingSystem.IsWindows()
             ? OrdinalIgnoreCase
             : Ordinal;
+
         return string.Equals(left, right, comparison);
     }
 

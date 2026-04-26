@@ -78,193 +78,193 @@ sealed class FixtureWorkspace : IAsyncDisposable
     }
 
     const string SampleSolution = """
-        <Solution>
-          <Project Path="src/Sample.Core/Sample.Core.csproj" />
-          <Project Path="src/Sample.App/Sample.App.csproj" />
-          <Project Path="src/Sample.Other/Sample.Other.csproj" />
-        </Solution>
-        """;
+                                  <Solution>
+                                    <Project Path="src/Sample.Core/Sample.Core.csproj" />
+                                    <Project Path="src/Sample.App/Sample.App.csproj" />
+                                    <Project Path="src/Sample.Other/Sample.Other.csproj" />
+                                  </Solution>
+                                  """;
 
     const string CoreProject = """
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
-            <ImplicitUsings>enable</ImplicitUsings>
-            <Nullable>enable</Nullable>
-          </PropertyGroup>
-        </Project>
-        """;
+                               <Project Sdk="Microsoft.NET.Sdk">
+                                 <PropertyGroup>
+                                   <TargetFramework>net10.0</TargetFramework>
+                                   <ImplicitUsings>enable</ImplicitUsings>
+                                   <Nullable>enable</Nullable>
+                                 </PropertyGroup>
+                               </Project>
+                               """;
 
     const string AppProject = """
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
-            <ImplicitUsings>enable</ImplicitUsings>
-            <Nullable>enable</Nullable>
-          </PropertyGroup>
+                              <Project Sdk="Microsoft.NET.Sdk">
+                                <PropertyGroup>
+                                  <TargetFramework>net10.0</TargetFramework>
+                                  <ImplicitUsings>enable</ImplicitUsings>
+                                  <Nullable>enable</Nullable>
+                                </PropertyGroup>
 
-          <ItemGroup>
-            <ProjectReference Include="..\Sample.Core\Sample.Core.csproj" />
-            <ProjectReference Include="..\Sample.Other\Sample.Other.csproj" />
-            <Reference Include="Sample.External">
-              <HintPath>..\..\external\Sample.External.dll</HintPath>
-            </Reference>
-          </ItemGroup>
-        </Project>
-        """;
+                                <ItemGroup>
+                                  <ProjectReference Include="..\Sample.Core\Sample.Core.csproj" />
+                                  <ProjectReference Include="..\Sample.Other\Sample.Other.csproj" />
+                                  <Reference Include="Sample.External">
+                                    <HintPath>..\..\external\Sample.External.dll</HintPath>
+                                  </Reference>
+                                </ItemGroup>
+                              </Project>
+                              """;
 
     const string OtherProject = """
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
-            <ImplicitUsings>enable</ImplicitUsings>
-            <Nullable>enable</Nullable>
-          </PropertyGroup>
-        </Project>
-        """;
+                                <Project Sdk="Microsoft.NET.Sdk">
+                                  <PropertyGroup>
+                                    <TargetFramework>net10.0</TargetFramework>
+                                    <ImplicitUsings>enable</ImplicitUsings>
+                                    <Nullable>enable</Nullable>
+                                  </PropertyGroup>
+                                </Project>
+                                """;
 
     const string StandaloneProject = """
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup>
-            <TargetFramework>net10.0</TargetFramework>
-          </PropertyGroup>
-        </Project>
-        """;
+                                     <Project Sdk="Microsoft.NET.Sdk">
+                                       <PropertyGroup>
+                                         <TargetFramework>net10.0</TargetFramework>
+                                       </PropertyGroup>
+                                     </Project>
+                                     """;
 
     const string AnimalCode = """
-        namespace Sample.Core;
+                              namespace Sample.Core;
 
-        public interface IGreeter
-        {
-            string Greet(string name);
-        }
+                              public interface IGreeter
+                              {
+                                  string Greet(string name);
+                              }
 
-        public abstract class Animal
-        {
-            public abstract string Speak();
+                              public abstract class Animal
+                              {
+                                  public abstract string Speak();
 
-            public virtual string Kind => "animal";
-        }
-        """;
+                                  public virtual string Kind => "animal";
+                              }
+                              """;
 
     const string DogCode = """
-        using System.Diagnostics.CodeAnalysis;
+                           using System.Diagnostics.CodeAnalysis;
 
-        namespace Sample.Core;
+                           namespace Sample.Core;
 
-        /// <summary>
-        /// Represents a greeter dog.
-        /// </summary>
-        /// <remarks>
-        /// Call <see cref="Greet(string)" /> when a greeting is needed.
-        /// </remarks>
-        [ExcludeFromCodeCoverage(Justification = "fixture")]
-        public sealed class Dog : Animal, IGreeter
-        {
-            public override string Speak() => "woof";
+                           /// <summary>
+                           /// Represents a greeter dog.
+                           /// </summary>
+                           /// <remarks>
+                           /// Call <see cref="Greet(string)" /> when a greeting is needed.
+                           /// </remarks>
+                           [ExcludeFromCodeCoverage(Justification = "fixture")]
+                           public sealed class Dog : Animal, IGreeter
+                           {
+                               public override string Speak() => "woof";
 
-            public override string Kind => "dog";
+                               public override string Kind => "dog";
 
-            /// <summary>
-            /// Greets <paramref name="name" />.
-            /// </summary>
-            /// <param name="name">The person to greet.</param>
-            /// <returns>A greeting string.</returns>
-            [return: NotNull]
-            public string Greet([DisallowNull] string name) => $"Hi {name}";
+                               /// <summary>
+                               /// Greets <paramref name="name" />.
+                               /// </summary>
+                               /// <param name="name">The person to greet.</param>
+                               /// <returns>A greeting string.</returns>
+                               [return: NotNull]
+                               public string Greet([DisallowNull] string name) => $"Hi {name}";
 
-            public string GenericEcho(string value) => Echo(value);
+                               public string GenericEcho(string value) => Echo(value);
 
-            /// <summary>
-            /// Returns <paramref name="value" /> unchanged.
-            /// </summary>
-            /// <typeparam name="T">The echoed value type.</typeparam>
-            public static T Echo<T>([DisallowNull] T value) where T : notnull => value;
+                               /// <summary>
+                               /// Returns <paramref name="value" /> unchanged.
+                               /// </summary>
+                               /// <typeparam name="T">The echoed value type.</typeparam>
+                               public static T Echo<T>([DisallowNull] T value) where T : notnull => value;
 
-            public int Overload(int value) => value + 1;
+                               public int Overload(int value) => value + 1;
 
-            public int Overload(string value) => value.Length;
-        }
-        """;
+                               public int Overload(string value) => value.Length;
+                           }
+                           """;
 
     const string WidgetPart1Code = """
-        namespace Sample.Core;
+                                   namespace Sample.Core;
 
-        public partial class Widget
-        {
-            public int Count { get; private set; }
-        }
-        """;
+                                   public partial class Widget
+                                   {
+                                       public int Count { get; private set; }
+                                   }
+                                   """;
 
     const string WidgetPart2Code = """
-        namespace Sample.Core;
+                                   namespace Sample.Core;
 
-        public partial class Widget
-        {
-            public void Build(int count)
-            {
-                Count = count;
-            }
-        }
-        """;
+                                   public partial class Widget
+                                   {
+                                       public void Build(int count)
+                                       {
+                                           Count = count;
+                                       }
+                                   }
+                                   """;
 
     const string ConsumerCode = """
-        using Sample.Core;
-        using Sample.External;
+                                using Sample.Core;
+                                using Sample.External;
 
-        namespace Sample.App;
+                                namespace Sample.App;
 
-        public sealed class Consumer : IExternalGreeter
-        {
-            public string Run()
-            {
-                var dog = new Dog();
-                var widget = new Widget();
-                var external = new ExternalThing();
-                widget.Build(dog.Overload(2));
-                return external.Compute(2).ToString() + new Sample.Other.Models.Widget().Name + dog.Greet(dog.Speak()) + widget.Count;
-            }
+                                public sealed class Consumer : IExternalGreeter
+                                {
+                                    public string Run()
+                                    {
+                                        var dog = new Dog();
+                                        var widget = new Widget();
+                                        var external = new ExternalThing();
+                                        widget.Build(dog.Overload(2));
+                                        return $"{external.Compute(2)}{new Sample.Other.Models.Widget().Name}{dog.Greet(dog.Speak())}{widget.Count}";
+                                    }
 
-            public string Format(string name) => new ExternalThing().Echo(name);
-        }
-        """;
+                                    public string Format(string name) => new ExternalThing().Echo(name);
+                                }
+                                """;
 
     const string OtherWidgetCode = """
-        namespace Sample.Other.Models;
+                                   namespace Sample.Other.Models;
 
-        public sealed class Widget
-        {
-            public string Name => "other";
-        }
-        """;
+                                   public sealed class Widget
+                                   {
+                                       public string Name => "other";
+                                   }
+                                   """;
 
     const string ExternalAssemblyCode = """
-        namespace Sample.External;
+                                        namespace Sample.External;
 
-        public interface IExternalGreeter
-        {
-            string Format(string name);
-        }
+                                        public interface IExternalGreeter
+                                        {
+                                            string Format(string name);
+                                        }
 
-        public class ExternalThing
-        {
-            public int Compute(int value) => value + 42;
+                                        public class ExternalThing
+                                        {
+                                            public int Compute(int value) => value + 42;
 
-            public string Echo(string value) => value;
+                                            public string Echo(string value) => value;
 
-            public string Name => "external";
+                                            public string Name => "external";
 
-            public sealed class Nested
-            {
-                public int Value => 7;
-            }
-        }
+                                            public sealed class Nested
+                                            {
+                                                public int Value => 7;
+                                            }
+                                        }
 
-        public sealed class Consumer
-        {
-            public string Name => "metadata";
-        }
-        """;
+                                        public sealed class Consumer
+                                        {
+                                            public string Name => "metadata";
+                                        }
+                                        """;
 
     static void WriteExternalAssembly(string path)
     {
@@ -277,31 +277,34 @@ sealed class FixtureWorkspace : IAsyncDisposable
             "Sample.External",
             [CSharpSyntaxTree.ParseText(ExternalAssemblyCode)],
             references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable)
+        );
 
         var result = compilation.Emit(path);
         if (result.Success)
             return;
 
         var diagnostics = string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()));
-        throw new InvalidOperationException("Failed to emit fixture metadata assembly:" + Environment.NewLine + diagnostics);
+        throw new InvalidOperationException($"Failed to emit fixture metadata assembly:{Environment.NewLine}{diagnostics}");
     }
 
     static string[] GetReferenceAssemblyPaths()
     {
         var runtimeDirectory = RuntimeEnvironment.GetRuntimeDirectory();
         var dotnetRoot = Directory.GetParent(runtimeDirectory)?.Parent?.Parent?.Parent?.FullName
-            ?? throw new InvalidOperationException("Could not locate the dotnet root from the runtime directory.");
+                         ?? throw new InvalidOperationException("Could not locate the dotnet root from the runtime directory.");
+
         var packRoot = Path.Combine(dotnetRoot, "packs", "Microsoft.NETCore.App.Ref");
         var refDirectory = Directory.GetDirectories(packRoot)
-            .Select(static path => (
-                Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : new Version(0, 0),
-                Path: Path.Combine(path, "ref", "net10.0")))
-            .Where(static item => Directory.Exists(item.Path))
-            .OrderByDescending(static item => item.Version)
-            .Select(static item => item.Path)
-            .FirstOrDefault()
-            ?? throw new InvalidOperationException("Could not locate the .NET 10 reference assemblies.");
+                               .Select(static path => (
+                                   Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : new Version(0, 0),
+                                   Path: Path.Combine(path, "ref", "net10.0"))
+                               )
+                               .Where(static item => Directory.Exists(item.Path))
+                               .OrderByDescending(static item => item.Version)
+                               .Select(static item => item.Path)
+                               .FirstOrDefault()
+                           ?? throw new InvalidOperationException("Could not locate the .NET 10 reference assemblies.");
 
         return Directory.GetFiles(refDirectory, "*.dll");
     }

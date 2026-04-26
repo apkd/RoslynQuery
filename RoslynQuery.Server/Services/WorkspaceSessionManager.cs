@@ -92,6 +92,7 @@ public sealed class WorkspaceSessionManager
                 TargetKind = session.TargetKind,
                 Status = await BuildStatusAsync(session, ct, includeDocuments: false, includeDiagnostics: false, includeProjects: false),
             };
+
             session.StartIndexBuild();
             return response;
         }
@@ -237,10 +238,11 @@ public sealed class WorkspaceSessionManager
             var members = CollectTypeMembers(index, activeSession.Solution, typeSymbol, includeInherited)
                 .AsValueEnumerable()
                 .Select(item =>
-                {
-                    var summary = index.ToSummary(item);
-                    return ApplyPathStyle(in summary, pathStyle);
-                })
+                    {
+                        var summary = index.ToSummary(item);
+                        return ApplyPathStyle(in summary, pathStyle);
+                    }
+                )
                 .ToArray();
 
             return new()
@@ -417,7 +419,8 @@ public sealed class WorkspaceSessionManager
             pathStyle,
             startedAtUtc,
             stopwatch.Elapsed,
-            messages);
+            messages
+        );
     }
 
     static async Task<WorkspaceStatusResponse> BuildStatusAsync(
@@ -425,7 +428,8 @@ public sealed class WorkspaceSessionManager
         CancellationToken ct,
         bool includeDocuments = true,
         bool includeDiagnostics = true,
-        bool includeProjects = true)
+        bool includeProjects = true
+    )
     {
         if (session is null)
             return new() { IsBound = false };
@@ -459,6 +463,7 @@ public sealed class WorkspaceSessionManager
             .AsValueEnumerable()
             .Where(static project => project.Language == LanguageNames.CSharp)
             .ToArray();
+
         Array.Sort(projects, static (left, right) => StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name));
 
         var result = new ProjectInfo[projects.Length];
@@ -472,6 +477,7 @@ public sealed class WorkspaceSessionManager
                     .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                     .ToArray()
                 : [];
+
             var documentCount = includeDocuments
                 ? documents.Length
                 : EnumerateBrowsableDocuments(project).Length;
@@ -495,7 +501,8 @@ public sealed class WorkspaceSessionManager
         WorkspaceSymbolIndex index,
         string symbol,
         string? kindFilter,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var sourceResolution = index.Resolve(symbol, kindFilter);
         if (sourceResolution.Success)
@@ -520,6 +527,7 @@ public sealed class WorkspaceSessionManager
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
+
         return string.Equals(left, right, comparison);
     }
 
@@ -532,9 +540,9 @@ public sealed class WorkspaceSessionManager
         => project.Documents
             .AsValueEnumerable()
             .Where(static document =>
-            document.SourceCodeKind == SourceCodeKind.Regular
-            && document.FilePath is not null
-            && IsBrowsablePath(document.FilePath))
+                document is { SourceCodeKind: SourceCodeKind.Regular, FilePath: not null }
+                && IsBrowsablePath(document.FilePath)
+            )
             .ToArray();
 
     static bool IsBrowsablePath(string path)
@@ -616,9 +624,9 @@ public sealed class WorkspaceSessionManager
         return symbol.ToUpperInvariant() switch
         {
             _ when symbol.StartsWith("NETSTANDARD", StringComparison.OrdinalIgnoreCase) => ConvertFrameworkSymbol(symbol, "NETSTANDARD", "netstandard"),
-            _ when symbol.StartsWith("NETCOREAPP", StringComparison.OrdinalIgnoreCase) => ConvertFrameworkSymbol(symbol, "NETCOREAPP", "netcoreapp"),
-            _ when symbol.StartsWith("NET", StringComparison.OrdinalIgnoreCase) => ConvertFrameworkSymbol(symbol, "NET", "net"),
-            _ => null,
+            _ when symbol.StartsWith("NETCOREAPP", StringComparison.OrdinalIgnoreCase)  => ConvertFrameworkSymbol(symbol, "NETCOREAPP", "netcoreapp"),
+            _ when symbol.StartsWith("NET", StringComparison.OrdinalIgnoreCase)         => ConvertFrameworkSymbol(symbol, "NET", "net"),
+            _                                                                           => null,
         };
     }
 
@@ -629,7 +637,7 @@ public sealed class WorkspaceSessionManager
             return null;
 
         if (!suffix.Contains('_'))
-            return IsDigits(suffix) ? tfmPrefix + suffix.ToLowerInvariant() : null;
+            return IsDigits(suffix) ? $"{tfmPrefix}{suffix.ToLowerInvariant()}" : null;
 
         var parts = suffix.Split('_', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 2 || !IsDigits(parts[0]) || !IsDigits(parts[1]))
@@ -649,14 +657,14 @@ public sealed class WorkspaceSessionManager
     internal static string NormalizeSeverity(DiagnosticSeverity severity)
         => severity switch
         {
-            DiagnosticSeverity.Hidden => "hidden",
-            DiagnosticSeverity.Info => "info",
+            DiagnosticSeverity.Hidden  => "hidden",
+            DiagnosticSeverity.Info    => "info",
             DiagnosticSeverity.Warning => "warning",
-            DiagnosticSeverity.Error => "error",
-            _ => severity.ToString().ToLowerInvariant(),
+            DiagnosticSeverity.Error   => "error",
+            _                          => severity.ToString().ToLowerInvariant(),
         };
 
-    static IEnumerable<ResolvedSymbol> CollectTypeMembers(WorkspaceSymbolIndex index, Solution solution, INamedTypeSymbol typeSymbol, bool includeInherited)
+    static ResolvedSymbol[] CollectTypeMembers(WorkspaceSymbolIndex index, Solution solution, INamedTypeSymbol typeSymbol, bool includeInherited)
     {
         var memberSymbols = new List<ISymbol>();
         AddDeclared(typeSymbol);
@@ -727,6 +735,7 @@ public sealed class WorkspaceSessionManager
                             methodCount++;
                             break;
                     }
+
                     break;
 
                 case IPropertySymbol:
@@ -780,7 +789,8 @@ public sealed class WorkspaceSessionManager
             .Where(candidate =>
                 candidate.MethodKind == method.MethodKind
                 && !candidate.IsImplicitlyDeclared
-                && WorkspaceSymbolIndex.ShouldIndexMember(candidate))
+                && WorkspaceSymbolIndex.ShouldIndexMember(candidate)
+            )
             .Cast<ISymbol>()
             .Distinct(SymbolEqualityComparer.Default)
             .Select(symbol => index.CreateResolvedSymbol(solution, symbol))
@@ -793,10 +803,11 @@ public sealed class WorkspaceSessionManager
         return overloads
             .AsValueEnumerable()
             .Select(overload =>
-            {
-                var summary = index.ToSummary(overload);
-                return ApplyPathStyle(in summary, pathStyle);
-            })
+                {
+                    var summary = index.ToSummary(overload);
+                    return ApplyPathStyle(in summary, pathStyle);
+                }
+            )
             .ToArray();
     }
 
@@ -808,16 +819,17 @@ public sealed class WorkspaceSessionManager
                 .AsValueEnumerable()
                 .GroupBy(static reference => reference.Project)
                 .Select(static group => new ProjectReferenceCount
-                {
-                    Project = group.Key,
-                    Count = group.Count(),
-                })
+                    {
+                        Project = group.Key,
+                        Count = group.Count(),
+                    }
+                )
                 .OrderBy(static item => item.Project, StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
             Examples = references.AsValueEnumerable().Take(3).ToArray(),
         };
 
-    async Task<ReferenceInfo[]> CollectReferencesAsync(WorkspaceSession session, ResolvedSymbol resolved, WorkspacePathStyle pathStyle, CancellationToken ct)
+    static async Task<ReferenceInfo[]> CollectReferencesAsync(WorkspaceSession session, ResolvedSymbol resolved, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
         var references = await SymbolFinder.FindReferencesAsync(resolved.Symbol, session.Solution, cancellationToken: ct);
         var textCache = new Dictionary<DocumentId, SourceText>();
@@ -838,16 +850,18 @@ public sealed class WorkspaceSessionManager
             var lineSpan = location.Location.GetLineSpan();
             var lineText = text.Lines[lineSpan.StartLinePosition.Line].ToString().AsSpan().Trim();
             var trimmedLineText = lineText.Length == 0 ? string.Empty : lineText.ToString();
-            items.Add(new()
-            {
-                Project = location.Document.Project.Name,
-                DocumentPath = WorkspacePathNormalizer.Format(location.Document.FilePath, pathStyle),
-                Line = lineSpan.StartLinePosition.Line + 1,
-                Column = lineSpan.StartLinePosition.Character + 1,
-                EndLine = lineSpan.EndLinePosition.Line + 1,
-                EndColumn = lineSpan.EndLinePosition.Character + 1,
-                LineText = trimmedLineText,
-            });
+            items.Add(
+                new()
+                {
+                    Project = location.Document.Project.Name,
+                    DocumentPath = WorkspacePathNormalizer.Format(location.Document.FilePath, pathStyle),
+                    Line = lineSpan.StartLinePosition.Line + 1,
+                    Column = lineSpan.StartLinePosition.Character + 1,
+                    EndLine = lineSpan.EndLinePosition.Line + 1,
+                    EndColumn = lineSpan.EndLinePosition.Character + 1,
+                    LineText = trimmedLineText,
+                }
+            );
         }
 
         return items
@@ -889,14 +903,16 @@ public sealed class WorkspaceSessionManager
                 continue;
 
             var location = SymbolFactory.ToLocation(diagnostic.Location, lineText: null);
-            diagnostics.Add(new()
-            {
-                Project = project.Name,
-                Id = diagnostic.Id,
-                Severity = NormalizeSeverity(diagnostic.Severity),
-                Message = diagnostic.GetMessage(),
-                Location = ApplyPathStyle(in location, pathStyle),
-            });
+            diagnostics.Add(
+                new()
+                {
+                    Project = project.Name,
+                    Id = diagnostic.Id,
+                    Severity = NormalizeSeverity(diagnostic.Severity),
+                    Message = diagnostic.GetMessage(),
+                    Location = ApplyPathStyle(in location, pathStyle),
+                }
+            );
         }
 
         return diagnostics
@@ -943,7 +959,8 @@ public sealed class WorkspaceSessionManager
         ResolvedSymbol resolved,
         string[]? requestedRelations,
         WorkspacePathStyle pathStyle,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var relations = new List<string>();
         var seenRelations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -961,24 +978,29 @@ public sealed class WorkspaceSessionManager
         }
 
         var results = new List<RelatedSymbolInfo>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<RelatedSymbolKey>();
 
         foreach (var relation in relations)
         {
             switch (true)
             {
                 case true when relation.Equals("base_types", StringComparison.OrdinalIgnoreCase):
-                    if (resolved.Symbol is INamedTypeSymbol namedType && namedType.BaseType is { SpecialType: not SpecialType.System_Object } baseType)
+                {
+                    if (resolved.Symbol is INamedTypeSymbol { BaseType: { SpecialType: not SpecialType.System_Object } baseType })
                         Add(relation, baseType);
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("implemented_interfaces", StringComparison.OrdinalIgnoreCase):
+                {
                     if (resolved.Symbol is INamedTypeSymbol interfaceOwner)
                         foreach (var item in interfaceOwner.Interfaces)
                             Add(relation, item);
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("derived_types", StringComparison.OrdinalIgnoreCase):
+                {
                     if (resolved.Symbol is INamedTypeSymbol derivableType)
                     {
                         if (derivableType.TypeKind == TypeKind.Interface)
@@ -992,41 +1014,57 @@ public sealed class WorkspaceSessionManager
                                 Add(relation, item);
                         }
                     }
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("implementations", StringComparison.OrdinalIgnoreCase):
+                {
                     if (resolved.Symbol is INamedTypeSymbol or IMethodSymbol or IPropertySymbol or IEventSymbol)
                         foreach (var item in await SymbolFinder.FindImplementationsAsync(resolved.Symbol, session.Solution, cancellationToken: ct))
                             Add(relation, item);
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("overrides", StringComparison.OrdinalIgnoreCase):
+                {
                     if (resolved.Symbol is IMethodSymbol or IPropertySymbol or IEventSymbol)
                         foreach (var item in await SymbolFinder.FindOverridesAsync(resolved.Symbol, session.Solution, cancellationToken: ct))
                             Add(relation, item);
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("overridden_members", StringComparison.OrdinalIgnoreCase):
+                {
                     switch (resolved.Symbol)
                     {
                         case IMethodSymbol { OverriddenMethod: not null } method:
+                        {
                             Add(relation, method.OverriddenMethod);
                             break;
+                        }
                         case IPropertySymbol { OverriddenProperty: not null } property:
+                        {
                             Add(relation, property.OverriddenProperty);
                             break;
+                        }
                         case IEventSymbol { OverriddenEvent: not null } @event:
+                        {
                             Add(relation, @event.OverriddenEvent);
                             break;
+                        }
                     }
-                    break;
 
+                    break;
+                }
                 case true when relation.Equals("containing_symbol", StringComparison.OrdinalIgnoreCase):
+                {
                     if (resolved.Symbol.ContainingType is not null)
                         Add(relation, resolved.Symbol.ContainingType);
                     else if (resolved.Symbol.ContainingNamespace is { IsGlobalNamespace: false } containingNamespace)
                         Add(relation, containingNamespace);
+
                     break;
+                }
             }
         }
 
@@ -1035,16 +1073,18 @@ public sealed class WorkspaceSessionManager
         void Add(string relation, ISymbol symbol)
         {
             var related = index.CreateResolvedSymbol(session.Solution, symbol);
-            var key = relation + "\n" + index.GetCanonicalSignature(related.Entry);
+            var key = new RelatedSymbolKey(relation, index.GetCanonicalSignature(related.Entry));
             if (!seen.Add(key))
                 return;
 
             var summary = index.ToSummary(related);
-            results.Add(new()
-            {
-                Relation = relation,
-                Symbol = ApplyPathStyle(in summary, pathStyle),
-            });
+            results.Add(
+                new()
+                {
+                    Relation = relation,
+                    Symbol = ApplyPathStyle(in summary, pathStyle),
+                }
+            );
         }
     }
 
@@ -1136,6 +1176,8 @@ public sealed class WorkspaceSessionManager
         return value.Length > 0;
     }
 }
+
+readonly record struct RelatedSymbolKey(string Relation, string CanonicalSignature);
 
 sealed class WorkspaceSession(
     MSBuildWorkspace workspace,
@@ -1254,14 +1296,16 @@ sealed class WorkspaceSession(
                     styledLocation = WorkspaceSessionManager.ApplyPathStyle(in inSourceLocation, PathStyle);
                 }
 
-                diagnostics.Add(new()
-                {
-                    Project = project.Name,
-                    Id = diagnostic.Id,
-                    Severity = WorkspaceSessionManager.NormalizeSeverity(diagnostic.Severity),
-                    Message = diagnostic.GetMessage(),
-                    Location = styledLocation,
-                });
+                diagnostics.Add(
+                    new()
+                    {
+                        Project = project.Name,
+                        Id = diagnostic.Id,
+                        Severity = WorkspaceSessionManager.NormalizeSeverity(diagnostic.Severity),
+                        Message = diagnostic.GetMessage(),
+                        Location = styledLocation,
+                    }
+                );
             }
         }
 

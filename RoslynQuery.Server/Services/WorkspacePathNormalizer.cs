@@ -20,7 +20,7 @@ static class WorkspacePathNormalizer
 
         const string wslMountPrefix = "/mnt/";
         if (path.Length == wslMountPrefix.Length + 1 && char.IsAsciiLetter(path[wslMountPrefix.Length]))
-            return char.ToUpperInvariant(path[wslMountPrefix.Length]) + @":\";
+            return $"{char.ToUpperInvariant(path[wslMountPrefix.Length])}:\\";
 
         var drive = char.ToUpperInvariant(path[wslMountPrefix.Length]);
         var remainder = path[(wslMountPrefix.Length + 2)..].Replace('/', '\\');
@@ -46,9 +46,9 @@ static class WorkspacePathNormalizer
     {
         const string wslMountPrefix = "/mnt/";
         return path is not null
-            && path.StartsWith(wslMountPrefix, StringComparison.OrdinalIgnoreCase)
-            && path.Length >= wslMountPrefix.Length + 1
-            && char.IsAsciiLetter(path[wslMountPrefix.Length])
-            && (path.Length == wslMountPrefix.Length + 1 || path[wslMountPrefix.Length + 1] == '/');
+               && path.StartsWith(wslMountPrefix, StringComparison.OrdinalIgnoreCase)
+               && path.Length >= wslMountPrefix.Length + 1
+               && char.IsAsciiLetter(path[wslMountPrefix.Length])
+               && (path.Length == wslMountPrefix.Length + 1 || path[wslMountPrefix.Length + 1] == '/');
     }
 }
