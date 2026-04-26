@@ -63,6 +63,35 @@ sealed class FixtureWorkspace : IAsyncDisposable
         return rootPath;
     }
 
+    public void WriteStaleCoreAssembly()
+    {
+        var outputPath = Path.Combine(Path.GetDirectoryName(CoreProjectPath)!, "bin", "Debug", "net10.0", "Sample.Core.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+
+        var references = GetReferenceAssemblyPaths()
+            .Select(static path => MetadataReference.CreateFromFile(path))
+            .ToArray();
+
+        var syntaxTrees = Directory
+            .EnumerateFiles(Path.GetDirectoryName(CoreProjectPath)!, "*.cs")
+            .Select(static path => CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path))
+            .ToArray();
+
+        var compilation = CSharpCompilation.Create(
+            "Sample.Core",
+            syntaxTrees,
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable)
+        );
+
+        var result = compilation.Emit(outputPath);
+        if (result.Success)
+            return;
+
+        var diagnostics = string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()));
+        throw new InvalidOperationException($"Failed to emit stale fixture assembly:{Environment.NewLine}{diagnostics}");
+    }
+
     public ValueTask DisposeAsync()
     {
         if (Directory.Exists(RootPath))

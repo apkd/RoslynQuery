@@ -129,6 +129,7 @@ public readonly record struct ViewIlResponse()
 {
     public bool Success { get; init; }
     public string? Error { get; init; }
+    public string? Message { get; init; }
     public string Query { get; init; } = string.Empty;
     public string[] Candidates { get; init; } = [];
     public SymbolSummary? Symbol { get; init; }

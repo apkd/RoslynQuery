@@ -996,7 +996,7 @@ static class ToolTextFormatter
                 builder.Append(failure);
                 builder.Append('\n');
                 builder.Append('\n');
-                builder.Append("Emit Diagnostics:");
+                builder.Append("Diagnostics:");
                 builder.Append('\n');
                 foreach (var diagnostic in response.EmitDiagnostics)
                 {
@@ -1016,6 +1016,32 @@ static class ToolTextFormatter
         var output = ZString.CreateStringBuilder();
         try
         {
+            if (response.EmitDiagnostics.Length > 0)
+            {
+                output.Append("Diagnostics:");
+                output.Append('\n');
+                foreach (var diagnostic in response.EmitDiagnostics)
+                {
+                    output.Append("- ");
+                    output.Append(diagnostic);
+                    output.Append('\n');
+                }
+
+                if (!string.IsNullOrWhiteSpace(response.Message))
+                {
+                    output.Append(response.Message);
+                    output.Append('\n');
+                }
+
+                output.Append('\n');
+            }
+            else if (!string.IsNullOrWhiteSpace(response.Message))
+            {
+                output.Append(response.Message);
+                output.Append('\n');
+                output.Append('\n');
+            }
+
             for (var methodIndex = 0; methodIndex < response.Methods.Length; methodIndex++)
             {
                 var method = response.Methods[methodIndex];

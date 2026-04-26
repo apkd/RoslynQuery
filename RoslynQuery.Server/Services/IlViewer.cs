@@ -7,6 +7,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using Cysharp.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Emit;
 using static System.StringComparison;
 
 namespace RoslynQuery;
@@ -38,19 +39,37 @@ static class IlViewer
             return new() { Error = "The project did not produce a compilation." };
 
         await using var peStream = new MemoryStream();
-        var emitResult = compilation.Emit(peStream, cancellationToken: ct);
+        EmitResult emitResult;
+        try
+        {
+            emitResult = compilation.Emit(peStream, cancellationToken: ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return TryViewStaleAssembly(
+                project,
+                compilation,
+                symbol,
+                compact,
+                [$"Compilation emit threw {exception.GetType().Name}: {exception.Message}"],
+                fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed"
+            );
+        }
+
         if (!emitResult.Success)
         {
-            return new()
-            {
-                Error = "The project could not be compiled, so IL is unavailable.",
-                EmitDiagnostics = emitResult.Diagnostics
-                    .AsValueEnumerable()
-                    .Where(static x => x.Severity is DiagnosticSeverity.Error)
-                    .Select(static x => x.ToString())
-                    .Take(20)
-                    .ToArray(),
-            };
+            return TryViewStaleAssembly(
+                project,
+                compilation,
+                symbol,
+                compact,
+                FormatEmitDiagnostics(emitResult.Diagnostics),
+                fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed"
+            );
         }
 
         peStream.Position = 0;
@@ -84,13 +103,60 @@ static class IlViewer
         if (assemblyPath is not { Length: > 0 })
             return new() { Error = "The symbol's metadata assembly path is unavailable, so IL is unavailable." };
 
+        var result = ViewAssembly(resolved.Symbol, assemblyPath, compact);
+        if (result.Success || result.Error is not null)
+            return result;
+
+        return new() { Error = "No metadata method body was found for the symbol." };
+    }
+
+    static ViewIlResponse TryViewStaleAssembly(
+        Project project,
+        Compilation compilation,
+        ISymbol symbol,
+        bool compact,
+        string[] emitDiagnostics,
+        string fallbackFailurePrefix
+    )
+    {
+        var assemblyPath = FindFallbackAssemblyPath(project, compilation);
+        if (assemblyPath is null)
+        {
+            return new()
+            {
+                Error = "The project could not be compiled, so IL is unavailable.",
+                EmitDiagnostics = emitDiagnostics,
+            };
+        }
+
+        var fallback = ViewAssembly(symbol, assemblyPath, compact);
+        if (!fallback.Success)
+        {
+            return new()
+            {
+                Error = $"{fallbackFailurePrefix}: {fallback.Error}",
+                EmitDiagnostics = emitDiagnostics,
+            };
+        }
+
+        return new()
+        {
+            Success = true,
+            Message = $"Falling back to stale IL from {FormatFallbackAssemblyPath(project, assemblyPath)}.",
+            EmitDiagnostics = emitDiagnostics,
+            Methods = fallback.Methods,
+        };
+    }
+
+    static ViewIlResponse ViewAssembly(ISymbol symbol, string assemblyPath, bool compact)
+    {
         try
         {
             using var stream = File.OpenRead(assemblyPath);
             using var peReader = new PEReader(stream);
             var reader = peReader.GetMetadataReader();
             var options = new IlFormatOptions(compact);
-            var typeSymbol = resolved.Symbol.ContainingType;
+            var typeSymbol = symbol.ContainingType;
             if (typeSymbol is null)
                 return new() { Error = "The symbol is not declared on a type." };
 
@@ -98,7 +164,7 @@ static class IlViewer
             if (typeHandle.IsNil)
                 return new() { Error = "The symbol's containing type was not found in metadata." };
 
-            var methods = resolved.Symbol switch
+            var methods = symbol switch
             {
                 IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
                 IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),
@@ -121,6 +187,106 @@ static class IlViewer
         {
             return new() { Error = $"The metadata assembly is not a valid PE image: {exception.Message}" };
         }
+    }
+
+    static string[] FormatEmitDiagnostics(ImmutableArray<Diagnostic> diagnostics)
+        => diagnostics
+            .AsValueEnumerable()
+            .Where(static x => x.Severity is DiagnosticSeverity.Error)
+            .Select(static x => x.ToString())
+            .Take(20)
+            .ToArray();
+
+    static string? FindFallbackAssemblyPath(Project project, Compilation compilation)
+    {
+        var assemblyName = compilation.AssemblyName ?? project.AssemblyName;
+        if (string.IsNullOrWhiteSpace(assemblyName))
+            return null;
+
+        foreach (var candidate in GetFallbackAssemblyCandidates(project, assemblyName))
+            if (File.Exists(candidate))
+                return candidate;
+
+        return null;
+    }
+
+    static IEnumerable<string> GetFallbackAssemblyCandidates(Project project, string assemblyName)
+    {
+        var projectDirectory = GetProjectDirectory(project);
+        if (projectDirectory is not null && FindUnityProjectRoot(projectDirectory) is { } unityRoot)
+            yield return Path.Combine(unityRoot, "Library", "ScriptAssemblies", $"{assemblyName}.dll");
+
+        if (NormalizeAssemblyPath(project.OutputFilePath, projectDirectory) is { } outputFilePath)
+            yield return outputFilePath;
+
+        if (NormalizeAssemblyPath(project.CompilationOutputInfo.AssemblyPath, projectDirectory) is { } assemblyPath)
+            yield return assemblyPath;
+
+        if (projectDirectory is null)
+            yield break;
+
+        var binDirectory = Path.Combine(projectDirectory, "bin");
+        if (!Directory.Exists(binDirectory))
+            yield break;
+
+        foreach (var candidate in Directory.EnumerateFiles(binDirectory, $"{assemblyName}.dll", SearchOption.AllDirectories)
+                     .OrderByDescending(static path => File.GetLastWriteTimeUtc(path)))
+            yield return candidate;
+    }
+
+    static string? NormalizeAssemblyPath(string? path, string? projectDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        if (Path.IsPathRooted(path))
+            return Path.GetFullPath(path);
+
+        return projectDirectory is null
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(projectDirectory, path));
+    }
+
+    static string? GetProjectDirectory(Project project)
+        => string.IsNullOrWhiteSpace(project.FilePath)
+            ? project.Documents
+                .AsValueEnumerable()
+                .Select(static document => document.FilePath)
+                .Where(static path => !string.IsNullOrWhiteSpace(path))
+                .Select(static path => Path.GetDirectoryName(path!))
+                .FirstOrDefault(static path => !string.IsNullOrWhiteSpace(path))
+            : Path.GetDirectoryName(project.FilePath);
+
+    static string? FindUnityProjectRoot(string startDirectory)
+    {
+        var directory = new DirectoryInfo(startDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "Assets"))
+                && Directory.Exists(Path.Combine(directory.FullName, "ProjectSettings")))
+                return directory.FullName;
+
+            directory = directory.Parent;
+        }
+
+        return null;
+    }
+
+    static string FormatFallbackAssemblyPath(Project project, string assemblyPath)
+    {
+        var projectDirectory = GetProjectDirectory(project);
+        var path = projectDirectory is not null && IsSubPathOf(projectDirectory, assemblyPath)
+            ? Path.GetRelativePath(projectDirectory, assemblyPath)
+            : assemblyPath;
+
+        return path.Replace('\\', '/');
+    }
+
+    static bool IsSubPathOf(string basePath, string path)
+    {
+        var relativePath = Path.GetRelativePath(basePath, path);
+        return relativePath.Length is 0
+               || (!relativePath.StartsWith("..", Ordinal) && !Path.IsPathRooted(relativePath));
     }
 
     static IlMethodInfo[] BuildMethodInfos(

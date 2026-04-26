@@ -392,6 +392,7 @@ public sealed class WorkspaceSessionManager
                 {
                     Success = metadataResult.Success,
                     Error = metadataResult.Error,
+                    Message = metadataResult.Message,
                     Query = symbol,
                     Candidates = metadataResult.Candidates,
                     Symbol = ApplyPathStyle(in symbolSummary, activeSession.PathStyle),
@@ -416,6 +417,7 @@ public sealed class WorkspaceSessionManager
             {
                 Success = result.Success,
                 Error = result.Error,
+                Message = result.Message,
                 Query = symbol,
                 Candidates = result.Candidates,
                 Symbol = ApplyPathStyle(in symbolSummary, activeSession.PathStyle),

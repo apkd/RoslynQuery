@@ -49,6 +49,38 @@ public sealed class StdioServerTests
     }
 
     [Test]
+    public async Task ViewIlFallsBackToExistingOutputAssemblyWhenSourceEmitFails()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        fixture.WriteStaleCoreAssembly();
+        await File.AppendAllTextAsync(
+            fixture.DogPath,
+            """
+
+            namespace Sample.Core;
+
+            public sealed class BrokenCompile
+            {
+                public MissingType Value => null!;
+            }
+            """
+        );
+
+        await using var client = await McpTestClient.StartAsync(CancellationToken.None);
+
+        await client.CallToolAsync("load_workspace", new { path = fixture.RootPath }, CancellationToken.None);
+        var il = await client.CallToolAsync("view_il", new { symbol = "Dog.Greet" }, CancellationToken.None);
+
+        await Assert.That(il).Contains("Diagnostics:", Ordinal);
+        await Assert.That(il).Contains("MissingType", Ordinal);
+        await Assert.That(il).Contains("Falling back to stale IL from bin/Debug/net10.0/Sample.Core.dll.", Ordinal);
+        await Assert.That(il.IndexOf("Diagnostics:", Ordinal)).IsLessThan(il.IndexOf("Falling back to stale IL", Ordinal));
+        await Assert.That(il).Contains("Sample.Core.Dog.Greet(string name)", Ordinal);
+        await Assert.That(il).Contains("0000 ", Ordinal);
+        await Assert.That(il).Contains("ret", Ordinal);
+    }
+
+    [Test]
     public async Task ServerReturnsWslPathsAndTargetFrameworkOverMcp()
     {
         if (!OperatingSystem.IsWindows())
