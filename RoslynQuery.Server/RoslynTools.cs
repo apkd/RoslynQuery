@@ -11,11 +11,20 @@ public sealed class RoslynTools
     delegate string Formatter<T>(in T response);
 
     [McpServerTool(Name = "status")]
-    [Description("Returns the current workspace/session status. Lists current diagnostics and compilation errors.")]
+    [Description("Returns the current workspace/session status.")]
     public static Task<string> Status(
         WorkspaceSessionManager manager,
         CancellationToken ct
     ) => FormatAsync(manager.StatusAsync(ct), ToolTextFormatter.FormatStatus);
+
+    [McpServerTool(Name = "show_diagnostics")]
+    [Description("Shows workspace compilation diagnostics.")]
+    public static Task<string> ShowDiagnostics(
+        WorkspaceSessionManager manager,
+        CancellationToken ct,
+        [Description("Optional verbosity level filter. Allowed values: all, warnings, errors.")]
+        string verbosity = "all"
+    ) => FormatAsync(manager.ShowDiagnosticsAsync(verbosity, ct), ToolTextFormatter.FormatShowDiagnostics);
 
     [McpServerTool(Name = "load_workspace")]
     [Description("Loads (or reloads) a solution or project.")]

@@ -83,6 +83,15 @@ public readonly record struct DescribeSymbolResponse()
     public DiagnosticInfo[] Diagnostics { get; init; } = [];
 }
 
+public readonly record struct ShowDiagnosticsResponse()
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public string? TargetPath { get; init; }
+    public string Verbosity { get; init; } = string.Empty;
+    public DiagnosticInfo[] Diagnostics { get; init; } = [];
+}
+
 public readonly record struct ListTypeMembersResponse()
 {
     public bool Success { get; init; }

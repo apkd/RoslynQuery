@@ -371,11 +371,47 @@ public sealed class WorkspaceSessionManagerTests
         var stale = await manager.StatusAsync(CancellationToken.None);
         var reloaded = await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
         var after = await manager.StatusAsync(CancellationToken.None);
+        var diagnostics = await manager.ShowDiagnosticsAsync("all", CancellationToken.None);
 
         await Assert.That(before.Diagnostics).IsEmpty();
         await Assert.That(stale.Diagnostics).IsEmpty();
         await Assert.That(reloaded.Success).IsTrue();
-        await Assert.That(after.Diagnostics).Contains(diagnostic => string.Equals(diagnostic.Location?.FilePath, fixture.DogPath, OrdinalIgnoreCase));
+        await Assert.That(after.Diagnostics).IsEmpty();
+        await Assert.That(diagnostics.Diagnostics).Contains(diagnostic => string.Equals(diagnostic.Location?.FilePath, fixture.DogPath, OrdinalIgnoreCase));
+        await Assert.That(ToolTextFormatter.FormatShowDiagnostics(diagnostics)).Contains("Diagnostics (all):", Ordinal);
+    }
+
+    [Test]
+    public async Task ShowDiagnosticsHonorsVerbosity()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+        await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
+        await File.WriteAllTextAsync(
+            fixture.DogPath,
+            """
+            namespace Sample.Core;
+
+            public sealed class Dog : Animal, IGreeter
+            {
+                public override string Speak() => "woof"
+            }
+            """,
+            CancellationToken.None
+        );
+        await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
+
+        var errors = await manager.ShowDiagnosticsAsync("errors", CancellationToken.None);
+        var invalid = await manager.ShowDiagnosticsAsync("chatty", CancellationToken.None);
+
+        await Assert.That(errors.Success).IsTrue();
+        await Assert.That(errors.Verbosity).IsEqualTo("errors");
+        await Assert.That(errors.Diagnostics.Length).IsGreaterThan(0);
+        foreach (var diagnostic in errors.Diagnostics)
+            await Assert.That(diagnostic.Severity).IsEqualTo("error");
+
+        await Assert.That(invalid.Success).IsFalse();
+        await Assert.That(invalid.Error).Contains("Invalid verbosity", Ordinal);
     }
 
     [Test]

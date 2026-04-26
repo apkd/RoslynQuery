@@ -663,7 +663,9 @@ Unity.Multiplayer.Center*.csproj
 Unity.MemoryProfiler*.csproj
 ```
 
-- `status`: Lists loaded projects and prints compilation diagnostics.
+- `status`: Lists loaded projects.
+
+- `show_diagnostics`: Lists workspace compilation diagnostics on demand, with an optional verbosity parameter.
 
 ## Search and analysis
 

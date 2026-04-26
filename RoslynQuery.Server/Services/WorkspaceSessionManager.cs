@@ -44,7 +44,47 @@ public sealed class WorkspaceSessionManager
         await gate.WaitAsync(ct);
         try
         {
-            return await BuildStatusAsync(activeSession, ct);
+            return await BuildStatusAsync(activeSession, ct, includeDiagnostics: false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<ShowDiagnosticsResponse> ShowDiagnosticsAsync(string? verbosity, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            string normalizedVerbosity = verbosity?.Trim().ToLowerInvariant() switch
+            {
+                null or "" or "all" or "full" or "verbose" => "all",
+                "warning" or "warnings" or "warn"          => "warnings",
+                "error" or "errors"                        => "errors",
+                var value                                  => value,
+            };
+
+            if (activeSession is null)
+                return new() { Verbosity = normalizedVerbosity, Error = "No workspace is open." };
+
+            if (normalizedVerbosity is not ("all" or "warnings" or "errors"))
+            {
+                return new()
+                {
+                    Verbosity = verbosity ?? "",
+                    Error = "Invalid verbosity. Allowed values: all, warnings, errors.",
+                };
+            }
+
+            var diagnostics = await activeSession.GetDiagnosticsAsync(ct);
+            return new()
+            {
+                Success = true,
+                TargetPath = WorkspacePathNormalizer.Format(activeSession.TargetPath, activeSession.PathStyle),
+                Verbosity = normalizedVerbosity,
+                Diagnostics = FilterDiagnostics(diagnostics, normalizedVerbosity),
+            };
         }
         finally
         {
@@ -432,7 +472,7 @@ public sealed class WorkspaceSessionManager
         WorkspaceSession? session,
         CancellationToken ct,
         bool includeDocuments = true,
-        bool includeDiagnostics = true,
+        bool includeDiagnostics = false,
         bool includeProjects = true
     )
     {
@@ -541,6 +581,23 @@ public sealed class WorkspaceSessionManager
         => exception.ToString().Contains("BuildHost-net472", StringComparison.OrdinalIgnoreCase)
             ? "Legacy .NET Framework project loading failed because the bundled BuildHost-net472 files were unavailable."
             : exception.Message;
+
+    static DiagnosticInfo[] FilterDiagnostics(DiagnosticInfo[] diagnostics, string verbosity)
+        => verbosity switch
+        {
+            "errors" => diagnostics
+                .AsValueEnumerable()
+                .Where(static diagnostic => string.Equals(diagnostic.Severity, "error", StringComparison.Ordinal))
+                .ToArray(),
+            "warnings" => diagnostics
+                .AsValueEnumerable()
+                .Where(static diagnostic =>
+                    string.Equals(diagnostic.Severity, "error", StringComparison.Ordinal)
+                    || string.Equals(diagnostic.Severity, "warning", StringComparison.Ordinal)
+                )
+                .ToArray(),
+            _ => diagnostics,
+        };
 
     internal static Document[] EnumerateBrowsableDocuments(Project project)
         => project.Documents

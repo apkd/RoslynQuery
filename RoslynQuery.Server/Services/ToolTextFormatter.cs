@@ -27,7 +27,43 @@ static class ToolTextFormatter
 
             AppendWorkspaceMessages(ref builder, response.Messages);
             AppendProjects(ref builder, response.Projects, response.ExcludedProjectCount, workspaceRoot);
-            AppendDiagnostics(ref builder, response.Diagnostics, workspaceRoot);
+            return Finish(ref builder);
+        }
+        finally
+        {
+            builder.Dispose();
+        }
+    }
+
+    public static string FormatShowDiagnostics(in ShowDiagnosticsResponse response)
+    {
+        if (!response.Success)
+            return FormatFailure(response.Error, []);
+
+        var builder = ZString.CreateStringBuilder();
+        try
+        {
+            var workspaceRoot = GetDirectoryPath(response.TargetPath);
+
+            builder.Append("Diagnostics");
+            if (!string.IsNullOrWhiteSpace(response.Verbosity))
+            {
+                builder.Append(" (");
+                builder.Append(response.Verbosity);
+                builder.Append(')');
+            }
+
+            builder.Append(':');
+            builder.Append('\n');
+
+            if (response.Diagnostics.Length is 0)
+            {
+                builder.Append("- none");
+                builder.Append('\n');
+                return Finish(ref builder);
+            }
+
+            AppendDiagnostics(ref builder, response.Diagnostics, workspaceRoot, includeHeader: false);
             return Finish(ref builder);
         }
         finally
@@ -1131,14 +1167,22 @@ static class ToolTextFormatter
         }
     }
 
-    static void AppendDiagnostics(ref Utf16ValueStringBuilder builder, IReadOnlyList<DiagnosticInfo> diagnostics, string? workspaceRoot)
+    static void AppendDiagnostics(
+        ref Utf16ValueStringBuilder builder,
+        IReadOnlyList<DiagnosticInfo> diagnostics,
+        string? workspaceRoot,
+        bool includeHeader = true
+    )
     {
         if (diagnostics.Count is 0)
             return;
 
-        builder.Append('\n');
-        builder.Append("Diagnostics:");
-        builder.Append('\n');
+        if (includeHeader)
+        {
+            builder.Append('\n');
+            builder.Append("Diagnostics:");
+            builder.Append('\n');
+        }
 
         foreach (var diagnostic in diagnostics)
         {
