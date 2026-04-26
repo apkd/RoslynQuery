@@ -295,7 +295,7 @@ sealed class ExternalMetadataIndex
     )
     {
         var separatorIndexes = GetTopLevelTypePathSeparatorIndexes(normalized);
-        for (var i = separatorIndexes.Length - 1; i >= 0; i--)
+        for (int i = separatorIndexes.Length - 1; i >= 0; i--)
         {
             var separatorIndex = separatorIndexes[i];
             var namespacePart = normalized[..separatorIndex].Trim();
@@ -405,7 +405,7 @@ sealed class ExternalMetadataIndex
         if (separatorIndexes.Length is 0)
             return;
 
-        for (var i = separatorIndexes.Length - 1; i >= 0; i--)
+        for (int i = separatorIndexes.Length - 1; i >= 0; i--)
         {
             var separatorIndex = separatorIndexes[i];
             var namespacePart = normalized[..separatorIndex].Trim();
@@ -427,7 +427,7 @@ sealed class ExternalMetadataIndex
     {
         var indexes = new List<int>();
         var depth = 0;
-        for (var i = 0; i < value.Length; i++)
+        for (int i = 0; i < value.Length; i++)
         {
             depth = value[i] switch
             {
@@ -460,7 +460,7 @@ sealed class ExternalMetadataIndex
 
         var depth = 0;
         var indexes = new List<int>();
-        for (var i = 0; i < end; i++)
+        for (int i = 0; i < end; i++)
         {
             depth = query[i] switch
             {
@@ -473,7 +473,7 @@ sealed class ExternalMetadataIndex
                 indexes.Add(i);
         }
 
-        for (var i = indexes.Count - 1; i >= 0; i--)
+        for (int i = indexes.Count - 1; i >= 0; i--)
             yield return indexes[i];
     }
 
@@ -502,7 +502,7 @@ sealed class ExternalMetadataIndex
         if (parameters.Length != queryParameters.Length)
             return false;
 
-        for (var i = 0; i < parameters.Length; i++)
+        for (int i = 0; i < parameters.Length; i++)
             if (!ParameterTypeMatches(queryParameters[i], parameters[i].Type))
                 return false;
 
@@ -554,7 +554,7 @@ sealed class ExternalMetadataIndex
         var angleDepth = 0;
         var parenDepth = 0;
         var bracketDepth = 0;
-        for (var i = value.Length - 1; i >= 0; i--)
+        for (int i = value.Length - 1; i >= 0; i--)
         {
             switch (value[i])
             {
@@ -652,7 +652,7 @@ sealed class ExternalMetadataIndex
             return string.Empty;
 
         var metadataSegments = new string[segments.Length];
-        for (var i = 0; i < segments.Length; i++)
+        for (int i = 0; i < segments.Length; i++)
         {
             var segment = ToMetadataTypeSegment(segments[i]);
             if (segment.Length is 0)
@@ -669,7 +669,7 @@ sealed class ExternalMetadataIndex
         var segments = new List<string>();
         var depth = 0;
         var start = 0;
-        for (var i = 0; i < value.Length; i++)
+        for (int i = 0; i < value.Length; i++)
         {
             depth = value[i] switch
             {
@@ -716,7 +716,7 @@ sealed class ExternalMetadataIndex
 
     static int FindTopLevelGenericStart(string value)
     {
-        for (var i = 0; i < value.Length; i++)
+        for (int i = 0; i < value.Length; i++)
             if (value[i] == '<')
                 return i;
 
@@ -726,7 +726,7 @@ sealed class ExternalMetadataIndex
     static int FindMatchingGenericEnd(string value, int start)
     {
         var depth = 0;
-        for (var i = start; i < value.Length; i++)
+        for (int i = start; i < value.Length; i++)
         {
             switch (value[i])
             {
@@ -1017,7 +1017,7 @@ sealed class ExternalMetadataIndex
             var parenDepth = 0;
             var bracketDepth = 0;
             var start = 0;
-            for (var i = 0; i < value.Length; i++)
+            for (int i = 0; i < value.Length; i++)
             {
                 switch (value[i])
                 {
@@ -1100,7 +1100,7 @@ sealed class ExternalMetadataIndex
                 .ToDictionary(static item => item.IdentityKey, static item => item.AssemblyPath!, StringComparer.Ordinal);
 
             var assemblyIndexesByIdentity = new Dictionary<string, int>(immutableAssemblies.Length, StringComparer.Ordinal);
-            for (var i = 0; i < immutableAssemblies.Length; i++)
+            for (int i = 0; i < immutableAssemblies.Length; i++)
                 assemblyIndexesByIdentity[immutableAssemblies[i].IdentityKey] = i;
 
             return new(

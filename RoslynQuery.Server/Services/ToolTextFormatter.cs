@@ -412,7 +412,7 @@ static class ToolTextFormatter
             return;
 
         builder.Append("; attributes: ");
-        for (var i = 0; i < attributes.Count; i++)
+        for (int i = 0; i < attributes.Count; i++)
         {
             if (i > 0)
                 builder.Append(", ");
@@ -555,7 +555,7 @@ static class ToolTextFormatter
 
             builder.Append(": ");
             var sampleCount = Math.Min(bucket.Length, 3);
-            for (var i = 0; i < sampleCount; i++)
+            for (int i = 0; i < sampleCount; i++)
             {
                 if (i > 0)
                     builder.Append(", ");
@@ -594,7 +594,7 @@ static class ToolTextFormatter
         if (usages.Projects.Length > 0)
         {
             builder.Append(" (");
-            for (var i = 0; i < usages.Projects.Length; i++)
+            for (int i = 0; i < usages.Projects.Length; i++)
             {
                 if (i > 0)
                     builder.Append(", ");
@@ -1211,7 +1211,7 @@ static class ToolTextFormatter
         var tokenStart = -1;
         var lastSegmentStart = -1;
 
-        for (var i = 0; i < value.Length; i++)
+        for (int i = 0; i < value.Length; i++)
         {
             var character = value[i];
             if (IsIdentifierPart(character) || character is '.')

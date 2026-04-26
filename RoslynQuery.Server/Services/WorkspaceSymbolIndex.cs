@@ -15,7 +15,8 @@ sealed class WorkspaceSymbolIndex
         Dictionary<ProjectId, SourceProjectInfo> sourceProjects,
         Dictionary<string, int[]> byDisplay,
         Dictionary<string, int[]> bySimpleName,
-        ExternalMetadataIndex externalMetadata)
+        ExternalMetadataIndex externalMetadata
+    )
     {
         this.entries = entries;
         this.sourceProjects = sourceProjects;
@@ -28,20 +29,22 @@ sealed class WorkspaceSymbolIndex
 
     public static async Task<WorkspaceSymbolIndex> BuildAsync(Solution solution, CancellationToken ct)
     {
+        var projects = solution.Projects
+            .AsValueEnumerable()
+            .Where(static project => project.Language == LanguageNames.CSharp)
+            .ToArray();
+
         var entries = new List<SymbolSearchEntry>();
-        var sourceProjects = new Dictionary<ProjectId, SourceProjectInfo>();
+        var sourceProjects = new Dictionary<ProjectId, SourceProjectInfo>(projects.Length);
 
-        foreach (var project in solution.Projects)
-        {
-            if (project.Language != LanguageNames.CSharp)
-                continue;
-
+        foreach (var project in projects)
             sourceProjects[project.Id] = new(project.Name, project.FilePath);
-            var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null)
-                continue;
 
-            CollectNamespace(project, compilation.Assembly.GlobalNamespace, entries);
+        foreach (var level in BuildProjectDependencyLevels(projects))
+        {
+            var results = await BuildProjectLevelAsync(level, ct);
+            foreach (var result in results)
+                entries.AddRange(result.Entries);
         }
 
         var entryArray = entries.ToArray();
@@ -50,7 +53,99 @@ sealed class WorkspaceSymbolIndex
             sourceProjects,
             BuildLookup(entryArray, static entry => entry.DisplaySignature),
             BuildLookup(entryArray, static entry => entry.ShortName),
-            new ExternalMetadataIndex());
+            new()
+        );
+    }
+
+    static async Task<ProjectIndexBuildResult[]> BuildProjectLevelAsync(Project[] projects, CancellationToken ct)
+    {
+        if (projects.Length is 1)
+            return [await BuildProjectIndexAsync(projects[0], ct)];
+
+        var tasks = projects
+            .AsValueEnumerable()
+            .Select(project => Task.Run(() => BuildProjectIndexAsync(project, ct), ct))
+            .ToArray();
+
+        return await Task.WhenAll(tasks);
+    }
+
+    static async Task<ProjectIndexBuildResult> BuildProjectIndexAsync(Project project, CancellationToken ct)
+    {
+        var compilation = await project.GetCompilationAsync(ct);
+        if (compilation is null)
+            return new([]);
+
+        var entries = new List<SymbolSearchEntry>();
+        CollectNamespace(project, compilation.Assembly.GlobalNamespace, entries);
+        return new([.. entries]);
+    }
+
+    static Project[][] BuildProjectDependencyLevels(Project[] projects)
+    {
+        var projectIndexes = new Dictionary<ProjectId, int>(projects.Length);
+        for (int i = 0; i < projects.Length; i++)
+            projectIndexes[projects[i].Id] = i;
+
+        var dependencyCounts = new int[projects.Length];
+        var dependents = new List<int>?[projects.Length];
+        for (int projectIndex = 0; projectIndex < projects.Length; projectIndex++)
+        {
+            foreach (var reference in projects[projectIndex].ProjectReferences)
+            {
+                if (!projectIndexes.TryGetValue(reference.ProjectId, out var dependencyIndex))
+                    continue;
+
+                dependencyCounts[projectIndex]++;
+                (dependents[dependencyIndex] ??= []).Add(projectIndex);
+            }
+        }
+
+        var ready = new List<int>();
+        for (int i = 0; i < dependencyCounts.Length; i++)
+            if (dependencyCounts[i] is 0)
+                ready.Add(i);
+
+        var remaining = projects.Length;
+        var levels = new List<Project[]>();
+        while (ready.Count > 0)
+        {
+            ready.Sort();
+            var level = new Project[ready.Count];
+            for (int i = 0; i < ready.Count; i++)
+                level[i] = projects[ready[i]];
+
+            levels.Add(level);
+
+            var next = new List<int>();
+            foreach (var projectIndex in ready)
+            {
+                remaining--;
+                if (dependents[projectIndex] is not { } dependentProjects)
+                    continue;
+
+                foreach (var dependentIndex in dependentProjects)
+                {
+                    dependencyCounts[dependentIndex]--;
+                    if (dependencyCounts[dependentIndex] is 0)
+                        next.Add(dependentIndex);
+                }
+            }
+
+            ready = next;
+        }
+
+        if (remaining > 0)
+        {
+            var cyclicProjects = new List<Project>(remaining);
+            for (int i = 0; i < dependencyCounts.Length; i++)
+                if (dependencyCounts[i] > 0)
+                    cyclicProjects.Add(projects[i]);
+
+            levels.Add([.. cyclicProjects]);
+        }
+
+        return [.. levels];
     }
 
     public SymbolResolution Resolve(string query, string? kindFilter = null)
@@ -65,6 +160,7 @@ sealed class WorkspaceSymbolIndex
             var exactCanonical = FilterCanonicalCandidates(normalizedQuery, normalizedKind);
             if (exactCanonical.Length == 1)
                 return SymbolResolution.Resolved(exactCanonical[0]);
+
             if (exactCanonical.Length > 1)
                 return Ambiguous(query, exactCanonical);
         }
@@ -74,6 +170,7 @@ sealed class WorkspaceSymbolIndex
             var exactDisplay = FilterCandidates(byDisplay, normalizedQuery, normalizedKind);
             if (exactDisplay.Length == 1)
                 return SymbolResolution.Resolved(exactDisplay[0]);
+
             if (exactDisplay.Length > 1)
                 return Ambiguous(query, exactDisplay);
         }
@@ -81,6 +178,7 @@ sealed class WorkspaceSymbolIndex
         var exactSimple = FilterCandidates(bySimpleName, normalizedQuery, normalizedKind);
         if (exactSimple.Length == 1)
             return SymbolResolution.Resolved(exactSimple[0]);
+
         if (exactSimple.Length > 1)
             return Ambiguous(query, exactSimple);
 
@@ -126,9 +224,9 @@ sealed class WorkspaceSymbolIndex
             ValueType = symbol switch
             {
                 IPropertySymbol property => SymbolText.GetTypeDisplay(property.Type),
-                IFieldSymbol field => SymbolText.GetTypeDisplay(field.Type),
-                IEventSymbol @event => SymbolText.GetTypeDisplay(@event.Type),
-                _ => null,
+                IFieldSymbol field       => SymbolText.GetTypeDisplay(field.Type),
+                IEventSymbol @event      => SymbolText.GetTypeDisplay(@event.Type),
+                _                        => null,
             },
             Locations = GetLocations(resolved),
         };
@@ -168,7 +266,7 @@ sealed class WorkspaceSymbolIndex
         return symbol switch
         {
             IMethodSymbol method => method.MethodKind is not (MethodKind.PropertyGet or MethodKind.PropertySet or MethodKind.EventAdd or MethodKind.EventRemove or MethodKind.EventRaise or MethodKind.Constructor or MethodKind.StaticConstructor or MethodKind.Destructor),
-            _ => true,
+            _                    => true,
         };
     }
 
@@ -243,7 +341,8 @@ sealed class WorkspaceSymbolIndex
         return FilterCandidates(
             candidateIndexes,
             entry => string.Equals(GetOwnerName(entry), owner, OrdinalIgnoreCase),
-            kindFilter);
+            kindFilter
+        );
     }
 
     SymbolSearchEntry[] FilterCandidates(Dictionary<string, int[]> lookup, string query, string? kindFilter)
@@ -267,7 +366,7 @@ sealed class WorkspaceSymbolIndex
     static Dictionary<string, int[]> BuildLookup(SymbolSearchEntry[] entries, Func<SymbolSearchEntry, string> keySelector)
     {
         var groups = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < entries.Length; i++)
+        for (int i = 0; i < entries.Length; i++)
         {
             var key = keySelector(entries[i]);
             if (!groups.TryGetValue(key, out var bucket))
@@ -314,10 +413,13 @@ sealed class WorkspaceSymbolIndex
     SymbolResolution Ambiguous(string query, IEnumerable<SymbolSearchEntry> entries)
         => SymbolResolution.Ambiguous(
             $"'{query}' is ambiguous.",
-            entries.AsValueEnumerable().Select(GetCanonicalSignature).ToArray());
+            entries.AsValueEnumerable().Select(GetCanonicalSignature).ToArray()
+        );
 }
 
 readonly record struct SourceProjectInfo(string Name, string? FilePath);
+
+readonly record struct ProjectIndexBuildResult(SymbolSearchEntry[] Entries);
 
 readonly record struct ResolvedSymbol(SymbolSearchEntry Entry, ISymbol Symbol);
 
@@ -330,21 +432,27 @@ readonly record struct SymbolSearchEntry(
     int ShortNameLength,
     SymbolSearchKind SearchKind)
 {
-    public bool IsSource => ProjectId is not null;
+    public bool IsSource
+        => ProjectId is not null;
 
-    public bool IsMetadata => ProjectId is null;
+    public bool IsMetadata
+        => ProjectId is null;
 
     public string ShortName => HasShortNameRange
         ? DisplaySignature.Substring(ShortNameStart, ShortNameLength)
         : SymbolText.GetShortName(Symbol);
 
-    public string Kind => GetKind(SearchKind);
+    public string Kind
+        => GetKind(SearchKind);
 
-    public string? TypeKind => IsTypeKind(SearchKind) ? Kind : null;
+    public string? TypeKind
+        => IsTypeKind(SearchKind) ? Kind : null;
 
-    public string Origin => IsSource ? "source" : "metadata";
+    public string Origin
+        => IsSource ? "source" : "metadata";
 
-    bool HasShortNameRange => ShortNameStart >= 0;
+    bool HasShortNameRange
+        => ShortNameStart >= 0;
 
     public static SymbolSearchEntry CreateSource(Project project, ISymbol symbol)
     {
@@ -393,10 +501,10 @@ readonly record struct SymbolSearchEntry(
     public bool MatchesKind(string kind)
         => kind switch
         {
-            "all" => true,
-            "type" => IsTypeKind(SearchKind),
+            "all"    => true,
+            "type"   => IsTypeKind(SearchKind),
             "member" => SearchKind is not SymbolSearchKind.Namespace && !IsTypeKind(SearchKind),
-            _ => string.Equals(kind, Kind, OrdinalIgnoreCase),
+            _        => string.Equals(kind, Kind, OrdinalIgnoreCase),
         };
 
     bool ShortNameEquals(ReadOnlySpan<char> query)
@@ -455,55 +563,55 @@ readonly record struct SymbolSearchEntry(
     static SymbolSearchKind GetSearchKind(ISymbol symbol)
         => symbol switch
         {
-            INamespaceSymbol => SymbolSearchKind.Namespace,
+            INamespaceSymbol                                   => SymbolSearchKind.Namespace,
             INamedTypeSymbol namedType when namedType.IsRecord => SymbolSearchKind.Record,
             INamedTypeSymbol namedType => namedType.TypeKind switch
             {
-                Microsoft.CodeAnalysis.TypeKind.Class => SymbolSearchKind.Class,
+                Microsoft.CodeAnalysis.TypeKind.Class     => SymbolSearchKind.Class,
                 Microsoft.CodeAnalysis.TypeKind.Interface => SymbolSearchKind.Interface,
-                Microsoft.CodeAnalysis.TypeKind.Struct => SymbolSearchKind.Struct,
-                Microsoft.CodeAnalysis.TypeKind.Enum => SymbolSearchKind.Enum,
-                Microsoft.CodeAnalysis.TypeKind.Delegate => SymbolSearchKind.Delegate,
-                _ => SymbolSearchKind.Type,
+                Microsoft.CodeAnalysis.TypeKind.Struct    => SymbolSearchKind.Struct,
+                Microsoft.CodeAnalysis.TypeKind.Enum      => SymbolSearchKind.Enum,
+                Microsoft.CodeAnalysis.TypeKind.Delegate  => SymbolSearchKind.Delegate,
+                _                                         => SymbolSearchKind.Type,
             },
             IMethodSymbol method => method.MethodKind switch
             {
-                MethodKind.Constructor => SymbolSearchKind.Constructor,
-                MethodKind.StaticConstructor => SymbolSearchKind.StaticConstructor,
+                MethodKind.Constructor         => SymbolSearchKind.Constructor,
+                MethodKind.StaticConstructor   => SymbolSearchKind.StaticConstructor,
                 MethodKind.UserDefinedOperator => SymbolSearchKind.Operator,
-                MethodKind.Conversion => SymbolSearchKind.Conversion,
-                MethodKind.Destructor => SymbolSearchKind.Destructor,
-                _ => SymbolSearchKind.Method,
+                MethodKind.Conversion          => SymbolSearchKind.Conversion,
+                MethodKind.Destructor          => SymbolSearchKind.Destructor,
+                _                              => SymbolSearchKind.Method,
             },
             IPropertySymbol property when property.IsIndexer => SymbolSearchKind.Indexer,
-            IPropertySymbol => SymbolSearchKind.Property,
-            IFieldSymbol => SymbolSearchKind.Field,
-            IEventSymbol => SymbolSearchKind.Event,
-            _ => SymbolSearchKind.Other,
+            IPropertySymbol                                  => SymbolSearchKind.Property,
+            IFieldSymbol                                     => SymbolSearchKind.Field,
+            IEventSymbol                                     => SymbolSearchKind.Event,
+            _                                                => SymbolSearchKind.Other,
         };
 
     static string GetKind(SymbolSearchKind kind)
         => kind switch
         {
-            SymbolSearchKind.Namespace => "namespace",
-            SymbolSearchKind.Class => "class",
-            SymbolSearchKind.Interface => "interface",
-            SymbolSearchKind.Struct => "struct",
-            SymbolSearchKind.Record => "record",
-            SymbolSearchKind.Enum => "enum",
-            SymbolSearchKind.Delegate => "delegate",
-            SymbolSearchKind.Type => "type",
-            SymbolSearchKind.Constructor => "constructor",
+            SymbolSearchKind.Namespace         => "namespace",
+            SymbolSearchKind.Class             => "class",
+            SymbolSearchKind.Interface         => "interface",
+            SymbolSearchKind.Struct            => "struct",
+            SymbolSearchKind.Record            => "record",
+            SymbolSearchKind.Enum              => "enum",
+            SymbolSearchKind.Delegate          => "delegate",
+            SymbolSearchKind.Type              => "type",
+            SymbolSearchKind.Constructor       => "constructor",
             SymbolSearchKind.StaticConstructor => "static_constructor",
-            SymbolSearchKind.Operator => "operator",
-            SymbolSearchKind.Conversion => "conversion",
-            SymbolSearchKind.Destructor => "destructor",
-            SymbolSearchKind.Method => "method",
-            SymbolSearchKind.Indexer => "indexer",
-            SymbolSearchKind.Property => "property",
-            SymbolSearchKind.Field => "field",
-            SymbolSearchKind.Event => "event",
-            _ => "symbol",
+            SymbolSearchKind.Operator          => "operator",
+            SymbolSearchKind.Conversion        => "conversion",
+            SymbolSearchKind.Destructor        => "destructor",
+            SymbolSearchKind.Method            => "method",
+            SymbolSearchKind.Indexer           => "indexer",
+            SymbolSearchKind.Property          => "property",
+            SymbolSearchKind.Field             => "field",
+            SymbolSearchKind.Event             => "event",
+            _                                  => "symbol",
         };
 
     static bool IsTypeKind(SymbolSearchKind kind)

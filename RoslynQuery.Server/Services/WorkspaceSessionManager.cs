@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -108,6 +109,70 @@ public sealed class WorkspaceSessionManager
         {
             gate.Release();
         }
+    }
+
+    public async Task<WorkspaceInitializationBenchmarkResponse> BenchmarkInitializationAsync(string path, CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var load = await LoadAsync(path, ct);
+        var loadElapsed = stopwatch.Elapsed;
+        if (!load.Success)
+        {
+            stopwatch.Stop();
+            return new()
+            {
+                Success = false,
+                Error = load.Error,
+                RequestedPath = path,
+                ResolvedPath = load.ResolvedPath,
+                TargetKind = load.TargetKind,
+                ProjectCount = load.Status.ProjectCount,
+                LoadDurationMs = loadElapsed.TotalMilliseconds,
+                TotalDurationMs = stopwatch.Elapsed.TotalMilliseconds,
+            };
+        }
+
+        WorkspaceSession? session;
+        await gate.WaitAsync(ct);
+        try
+        {
+            session = activeSession;
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (session is null)
+        {
+            stopwatch.Stop();
+            return new()
+            {
+                Success = false,
+                Error = "No workspace is open after benchmark load.",
+                RequestedPath = path,
+                ResolvedPath = load.ResolvedPath,
+                TargetKind = load.TargetKind,
+                ProjectCount = load.Status.ProjectCount,
+                LoadDurationMs = loadElapsed.TotalMilliseconds,
+                TotalDurationMs = stopwatch.Elapsed.TotalMilliseconds,
+            };
+        }
+
+        await session.GetIndexAsync(ct);
+        stopwatch.Stop();
+
+        return new()
+        {
+            Success = true,
+            RequestedPath = path,
+            ResolvedPath = load.ResolvedPath,
+            TargetKind = load.TargetKind,
+            ProjectCount = load.Status.ProjectCount,
+            LoadDurationMs = loadElapsed.TotalMilliseconds,
+            IndexWaitDurationMs = (stopwatch.Elapsed - loadElapsed).TotalMilliseconds,
+            TotalDurationMs = stopwatch.Elapsed.TotalMilliseconds,
+        };
     }
 
     public async Task<DescribeSymbolResponse> DescribeSymbolAsync(string symbol, CancellationToken ct)
@@ -396,7 +461,7 @@ public sealed class WorkspaceSessionManager
         Array.Sort(projects, static (left, right) => StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name));
 
         var result = new ProjectInfo[projects.Length];
-        for (var i = 0; i < projects.Length; i++)
+        for (int i = 0; i < projects.Length; i++)
         {
             var project = projects[i];
             var documents = includeDocuments

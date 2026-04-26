@@ -133,7 +133,7 @@ static class SymbolFactory
         if (symbol.HasNotNullConstraint)
             constraints.Add("notnull");
 
-        for (var i = 0; i < symbol.ConstraintTypes.Length; i++)
+        for (int i = 0; i < symbol.ConstraintTypes.Length; i++)
         {
             var constraintType = symbol.ConstraintTypes[i];
             var display = SymbolText.GetTypeDisplay(constraintType);

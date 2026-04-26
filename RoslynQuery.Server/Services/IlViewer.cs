@@ -351,7 +351,7 @@ static class IlViewer
     {
         var count = reader.ReadInt32();
         var deltas = new int[count];
-        for (var i = 0; i < deltas.Length; i++)
+        for (int i = 0; i < deltas.Length; i++)
             deltas[i] = reader.ReadInt32();
 
         var targetBase = reader.Offset;

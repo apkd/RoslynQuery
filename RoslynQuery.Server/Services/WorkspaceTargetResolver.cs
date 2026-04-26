@@ -82,7 +82,7 @@ static class WorkspaceTargetResolver
         => Directory.EnumerateFiles(
                 path: root,
                 searchPattern: "*" + extension,
-                enumerationOptions: new EnumerationOptions
+                enumerationOptions: new()
                 {
                     RecurseSubdirectories = recurseSubdirectories,
                     IgnoreInaccessible = true,

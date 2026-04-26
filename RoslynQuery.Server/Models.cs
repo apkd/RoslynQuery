@@ -24,6 +24,19 @@ public readonly record struct OpenWorkspaceResponse()
     public WorkspaceStatusResponse Status { get; init; } = new();
 }
 
+public readonly record struct WorkspaceInitializationBenchmarkResponse()
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public string RequestedPath { get; init; } = string.Empty;
+    public string? ResolvedPath { get; init; }
+    public string? TargetKind { get; init; }
+    public int ProjectCount { get; init; }
+    public double LoadDurationMs { get; init; }
+    public double IndexWaitDurationMs { get; init; }
+    public double TotalDurationMs { get; init; }
+}
+
 public readonly record struct DescribeSymbolResponse()
 {
     public bool Success { get; init; }
