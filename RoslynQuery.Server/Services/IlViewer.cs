@@ -43,11 +43,11 @@ static class IlViewer
         {
             return new()
             {
-                Error = "The project could not be emitted, so IL is unavailable.",
+                Error = "The project could not be compiled, so IL is unavailable.",
                 EmitDiagnostics = emitResult.Diagnostics
                     .AsValueEnumerable()
-                    .Where(static diagnostic => diagnostic.Severity is DiagnosticSeverity.Error)
-                    .Select(static diagnostic => diagnostic.ToString())
+                    .Where(static x => x.Severity is DiagnosticSeverity.Error)
+                    .Select(static x => x.ToString())
                     .Take(20)
                     .ToArray(),
             };
