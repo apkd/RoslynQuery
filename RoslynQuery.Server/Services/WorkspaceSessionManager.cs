@@ -159,7 +159,7 @@ public sealed class WorkspaceSessionManager
             };
         }
 
-        await session.GetIndexAsync(ct);
+        var index = await session.GetIndexAsync(ct);
         stopwatch.Stop();
 
         return new()
@@ -172,6 +172,7 @@ public sealed class WorkspaceSessionManager
             LoadDurationMs = loadElapsed.TotalMilliseconds,
             IndexWaitDurationMs = (stopwatch.Elapsed - loadElapsed).TotalMilliseconds,
             TotalDurationMs = stopwatch.Elapsed.TotalMilliseconds,
+            Index = index.BuildMetrics,
         };
     }
 

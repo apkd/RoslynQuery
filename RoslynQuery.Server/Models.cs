@@ -35,6 +35,37 @@ public readonly record struct WorkspaceInitializationBenchmarkResponse()
     public double LoadDurationMs { get; init; }
     public double IndexWaitDurationMs { get; init; }
     public double TotalDurationMs { get; init; }
+    public SourceIndexBenchmarkInfo Index { get; init; } = new();
+}
+
+public readonly record struct SourceIndexBenchmarkInfo()
+{
+    public int ProjectCount { get; init; }
+    public int DependencyLevelCount { get; init; }
+    public int LargestDependencyLevelProjectCount { get; init; }
+    public int EntryCount { get; init; }
+    public int DisplayLookupKeyCount { get; init; }
+    public int SimpleNameLookupKeyCount { get; init; }
+    public double DependencyPlanningDurationMs { get; init; }
+    public double CompilationDurationMs { get; init; }
+    public double SymbolTraversalDurationMs { get; init; }
+    public double SymbolTraversalExclusiveDurationMs { get; init; }
+    public double SourceDeclarationCheckDurationMs { get; init; }
+    public double DisplaySignatureDurationMs { get; init; }
+    public double EntryMergeDurationMs { get; init; }
+    public double LookupBuildDurationMs { get; init; }
+    public double DisplayLookupBuildDurationMs { get; init; }
+    public double SimpleNameLookupBuildDurationMs { get; init; }
+    public SourceIndexProjectBenchmarkInfo[] SlowestProjects { get; init; } = [];
+}
+
+public readonly record struct SourceIndexProjectBenchmarkInfo()
+{
+    public string Project { get; init; } = string.Empty;
+    public int EntryCount { get; init; }
+    public double CompilationDurationMs { get; init; }
+    public double SymbolTraversalDurationMs { get; init; }
+    public double DisplaySignatureDurationMs { get; init; }
 }
 
 public readonly record struct DescribeSymbolResponse()

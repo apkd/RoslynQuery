@@ -15,7 +15,7 @@ Tests:
 Benchmarking:
 - To measure initial workspace load plus full source symbol index build, run `dotnet run -c Release --project RoslynQuery.Server -- --benchmark-init <solution-or-project-path>`.
 - Always pass the target solution/project path explicitly; the benchmark command does not use a default workspace.
-- The command prints JSON with `load_duration_ms`, `index_wait_duration_ms`, and `total_duration_ms`. Use `total_duration_ms` when comparing initial load/index rebuild changes.
+- The command prints JSON with `load_duration_ms`, `index_wait_duration_ms`, `total_duration_ms`, and an `index` object with phase timings. Use `total_duration_ms` when comparing initial load/index rebuild changes, and use the `index` phase timings to identify indexing bottlenecks.
 
 Roslyn/MSBuild constraints:
 - `Microsoft.Build.Locator` must register before any MSBuild or `MSBuildWorkspace` type is touched.

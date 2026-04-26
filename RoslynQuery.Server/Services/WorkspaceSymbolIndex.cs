@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.CodeAnalysis;
 using static System.StringComparison;
 
@@ -15,7 +16,8 @@ sealed class WorkspaceSymbolIndex
         Dictionary<ProjectId, SourceProjectInfo> sourceProjects,
         Dictionary<string, int[]> byDisplay,
         Dictionary<string, int[]> bySimpleName,
-        ExternalMetadataIndex externalMetadata
+        ExternalMetadataIndex externalMetadata,
+        SourceIndexBenchmarkInfo buildMetrics
     )
     {
         this.entries = entries;
@@ -23,9 +25,12 @@ sealed class WorkspaceSymbolIndex
         this.byDisplay = byDisplay;
         this.bySimpleName = bySimpleName;
         ExternalMetadata = externalMetadata;
+        BuildMetrics = buildMetrics;
     }
 
     public ExternalMetadataIndex ExternalMetadata { get; }
+
+    public SourceIndexBenchmarkInfo BuildMetrics { get; }
 
     public static async Task<WorkspaceSymbolIndex> BuildAsync(Solution solution, CancellationToken ct)
     {
@@ -33,6 +38,7 @@ sealed class WorkspaceSymbolIndex
             .AsValueEnumerable()
             .Where(static project => project.Language == LanguageNames.CSharp)
             .ToArray();
+        var metrics = new SourceIndexBuildMetrics(projects.Length);
 
         var entries = new List<SymbolSearchEntry>();
         var sourceProjects = new Dictionary<ProjectId, SourceProjectInfo>(projects.Length);
@@ -40,20 +46,44 @@ sealed class WorkspaceSymbolIndex
         foreach (var project in projects)
             sourceProjects[project.Id] = new(project.Name, project.FilePath);
 
-        foreach (var level in BuildProjectDependencyLevels(projects))
+        var dependencyPlanningStarted = Stopwatch.GetTimestamp();
+        var levels = BuildProjectDependencyLevels(projects);
+        metrics.DependencyPlanningTicks = GetElapsedTicks(dependencyPlanningStarted);
+        metrics.DependencyLevelCount = levels.Length;
+        metrics.LargestDependencyLevelProjectCount = levels.AsValueEnumerable().Select(static level => level.Length).DefaultIfEmpty().Max();
+
+        foreach (var level in levels)
         {
             var results = await BuildProjectLevelAsync(level, ct);
+            var mergeStarted = Stopwatch.GetTimestamp();
             foreach (var result in results)
+            {
                 entries.AddRange(result.Entries);
+                metrics.AddProject(result.Stats);
+            }
+
+            metrics.EntryMergeTicks += GetElapsedTicks(mergeStarted);
         }
 
         var entryArray = entries.ToArray();
+        var displayLookupStarted = Stopwatch.GetTimestamp();
+        var byDisplay = BuildDisplayLookup(entryArray);
+        metrics.DisplayLookupBuildTicks = GetElapsedTicks(displayLookupStarted);
+        metrics.DisplayLookupKeyCount = byDisplay.Count;
+
+        var simpleNameLookupStarted = Stopwatch.GetTimestamp();
+        var bySimpleName = BuildSimpleNameLookup(entryArray);
+        metrics.SimpleNameLookupBuildTicks = GetElapsedTicks(simpleNameLookupStarted);
+        metrics.SimpleNameLookupKeyCount = bySimpleName.Count;
+
+        metrics.EntryCount = entryArray.Length;
         return new(
             entryArray,
             sourceProjects,
-            BuildLookup(entryArray, static entry => entry.DisplaySignature),
-            BuildLookup(entryArray, static entry => entry.ShortName),
-            new()
+            byDisplay,
+            bySimpleName,
+            new(),
+            metrics.ToBenchmarkInfo()
         );
     }
 
@@ -72,13 +102,19 @@ sealed class WorkspaceSymbolIndex
 
     static async Task<ProjectIndexBuildResult> BuildProjectIndexAsync(Project project, CancellationToken ct)
     {
+        var stats = new ProjectIndexBuildStats(project.Name);
+        var compilationStarted = Stopwatch.GetTimestamp();
         var compilation = await project.GetCompilationAsync(ct);
+        stats.CompilationTicks += GetElapsedTicks(compilationStarted);
         if (compilation is null)
-            return new([]);
+            return new([], stats);
 
         var entries = new List<SymbolSearchEntry>();
-        CollectNamespace(project, compilation.Assembly.GlobalNamespace, entries);
-        return new([.. entries]);
+        var traversalStarted = Stopwatch.GetTimestamp();
+        CollectNamespace(project, compilation.Assembly.GlobalNamespace, entries, stats);
+        stats.SymbolTraversalTicks += GetElapsedTicks(traversalStarted);
+        stats.EntryCount = entries.Count;
+        return new([.. entries], stats);
     }
 
     static Project[][] BuildProjectDependencyLevels(Project[] projects)
@@ -147,6 +183,9 @@ sealed class WorkspaceSymbolIndex
 
         return [.. levels];
     }
+
+    static long GetElapsedTicks(long started)
+        => Stopwatch.GetElapsedTime(started).Ticks;
 
     public SymbolResolution Resolve(string query, string? kindFilter = null)
     {
@@ -289,40 +328,45 @@ sealed class WorkspaceSymbolIndex
             : normalized.Length == kind.Length ? kind : normalized.ToString();
     }
 
-    static void CollectNamespace(Project project, INamespaceSymbol symbol, List<SymbolSearchEntry> entries)
+    static void CollectNamespace(Project project, INamespaceSymbol symbol, List<SymbolSearchEntry> entries, ProjectIndexBuildStats stats)
     {
-        if (!symbol.IsGlobalNamespace && HasSourceLocation(symbol))
-            entries.Add(SymbolSearchEntry.CreateSource(project, symbol));
+        if (!symbol.IsGlobalNamespace && HasSourceDeclaration(symbol, stats))
+            entries.Add(SymbolSearchEntry.CreateSource(project, symbol, stats));
 
         foreach (var namespaceMember in symbol.GetNamespaceMembers())
-            CollectNamespace(project, namespaceMember, entries);
+            CollectNamespace(project, namespaceMember, entries, stats);
 
         foreach (var typeMember in symbol.GetTypeMembers())
-            CollectType(project, typeMember, entries);
+            CollectType(project, typeMember, entries, stats);
     }
 
-    static void CollectType(Project project, INamedTypeSymbol symbol, List<SymbolSearchEntry> entries)
+    static void CollectType(Project project, INamedTypeSymbol symbol, List<SymbolSearchEntry> entries, ProjectIndexBuildStats stats)
     {
-        if (HasSourceLocation(symbol))
-            entries.Add(SymbolSearchEntry.CreateSource(project, symbol));
+        if (HasSourceDeclaration(symbol, stats))
+            entries.Add(SymbolSearchEntry.CreateSource(project, symbol, stats));
 
         foreach (var member in symbol.GetMembers())
         {
             if (member is INamedTypeSymbol nestedType)
             {
-                CollectType(project, nestedType, entries);
+                CollectType(project, nestedType, entries, stats);
                 continue;
             }
 
-            if (!ShouldIndexMember(member) || !HasSourceLocation(member))
+            if (!ShouldIndexMember(member) || !HasSourceDeclaration(member, stats))
                 continue;
 
-            entries.Add(SymbolSearchEntry.CreateSource(project, member));
+            entries.Add(SymbolSearchEntry.CreateSource(project, member, stats));
         }
     }
 
-    static bool HasSourceLocation(ISymbol symbol)
-        => symbol.Locations.AsValueEnumerable().Any(static location => location.IsInSource);
+    static bool HasSourceDeclaration(ISymbol symbol, ProjectIndexBuildStats stats)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var result = symbol.DeclaringSyntaxReferences.Length > 0;
+        stats.SourceDeclarationCheckTicks += GetElapsedTicks(started);
+        return result;
+    }
 
     SymbolSearchEntry[] FilterCanonicalCandidates(string query, string? kindFilter)
     {
@@ -363,24 +407,64 @@ sealed class WorkspaceSymbolIndex
         return [.. results];
     }
 
-    static Dictionary<string, int[]> BuildLookup(SymbolSearchEntry[] entries, Func<SymbolSearchEntry, string> keySelector)
+    static Dictionary<string, int[]> BuildDisplayLookup(SymbolSearchEntry[] entries)
     {
-        var groups = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < entries.Length; i++)
+        var buckets = new Dictionary<string, LookupBuildBucket>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < entries.Length; i++)
         {
-            var key = keySelector(entries[i]);
-            if (!groups.TryGetValue(key, out var bucket))
+            var key = entries[i].DisplaySignature;
+            if (!buckets.TryGetValue(key, out var bucket))
             {
-                bucket = [];
-                groups.Add(key, bucket);
+                bucket = new();
+                buckets.Add(key, bucket);
             }
 
-            bucket.Add(i);
+            bucket.Count++;
         }
 
-        var lookup = new Dictionary<string, int[]>(groups.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var group in groups)
-            lookup.Add(group.Key, [.. group.Value]);
+        foreach (var bucket in buckets.Values)
+            bucket.Indexes = new int[bucket.Count];
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var bucket = buckets[entries[i].DisplaySignature];
+            bucket.Indexes[bucket.Position++] = i;
+        }
+
+        var lookup = new Dictionary<string, int[]>(buckets.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var bucket in buckets)
+            lookup.Add(bucket.Key, bucket.Value.Indexes);
+
+        return lookup;
+    }
+
+    static Dictionary<string, int[]> BuildSimpleNameLookup(SymbolSearchEntry[] entries)
+    {
+        var buckets = new Dictionary<ShortNameKey, LookupBuildBucket>(ShortNameKeyComparer.Instance);
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var key = entries[i].GetShortNameKey();
+            if (!buckets.TryGetValue(key, out var bucket))
+            {
+                bucket = new();
+                buckets.Add(key, bucket);
+            }
+
+            bucket.Count++;
+        }
+
+        foreach (var bucket in buckets.Values)
+            bucket.Indexes = new int[bucket.Count];
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var bucket = buckets[entries[i].GetShortNameKey()];
+            bucket.Indexes[bucket.Position++] = i;
+        }
+
+        var lookup = new Dictionary<string, int[]>(buckets.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var bucket in buckets)
+            lookup.Add(bucket.Key.ToString(), bucket.Value.Indexes);
 
         return lookup;
     }
@@ -419,7 +503,126 @@ sealed class WorkspaceSymbolIndex
 
 readonly record struct SourceProjectInfo(string Name, string? FilePath);
 
-readonly record struct ProjectIndexBuildResult(SymbolSearchEntry[] Entries);
+readonly record struct ProjectIndexBuildResult(SymbolSearchEntry[] Entries, ProjectIndexBuildStats Stats);
+
+sealed class SourceIndexBuildMetrics(int projectCount)
+{
+    readonly List<ProjectIndexBuildStats> projects = new(projectCount);
+
+    public int ProjectCount { get; } = projectCount;
+
+    public int DependencyLevelCount { get; set; }
+
+    public int LargestDependencyLevelProjectCount { get; set; }
+
+    public int EntryCount { get; set; }
+
+    public int DisplayLookupKeyCount { get; set; }
+
+    public int SimpleNameLookupKeyCount { get; set; }
+
+    public long DependencyPlanningTicks { get; set; }
+
+    public long EntryMergeTicks { get; set; }
+
+    public long DisplayLookupBuildTicks { get; set; }
+
+    public long SimpleNameLookupBuildTicks { get; set; }
+
+    public void AddProject(ProjectIndexBuildStats stats)
+        => projects.Add(stats);
+
+    public SourceIndexBenchmarkInfo ToBenchmarkInfo()
+    {
+        var compilationTicks = projects.AsValueEnumerable().Sum(static project => project.CompilationTicks);
+        var traversalTicks = projects.AsValueEnumerable().Sum(static project => project.SymbolTraversalTicks);
+        var sourceDeclarationCheckTicks = projects.AsValueEnumerable().Sum(static project => project.SourceDeclarationCheckTicks);
+        var displaySignatureTicks = projects.AsValueEnumerable().Sum(static project => project.DisplaySignatureTicks);
+        var traversalExclusiveTicks = Math.Max(0, traversalTicks - sourceDeclarationCheckTicks - displaySignatureTicks);
+        return new()
+        {
+            ProjectCount = ProjectCount,
+            DependencyLevelCount = DependencyLevelCount,
+            LargestDependencyLevelProjectCount = LargestDependencyLevelProjectCount,
+            EntryCount = EntryCount,
+            DisplayLookupKeyCount = DisplayLookupKeyCount,
+            SimpleNameLookupKeyCount = SimpleNameLookupKeyCount,
+            DependencyPlanningDurationMs = TicksToMilliseconds(DependencyPlanningTicks),
+            CompilationDurationMs = TicksToMilliseconds(compilationTicks),
+            SymbolTraversalDurationMs = TicksToMilliseconds(traversalTicks),
+            SymbolTraversalExclusiveDurationMs = TicksToMilliseconds(traversalExclusiveTicks),
+            SourceDeclarationCheckDurationMs = TicksToMilliseconds(sourceDeclarationCheckTicks),
+            DisplaySignatureDurationMs = TicksToMilliseconds(displaySignatureTicks),
+            EntryMergeDurationMs = TicksToMilliseconds(EntryMergeTicks),
+            LookupBuildDurationMs = TicksToMilliseconds(DisplayLookupBuildTicks + SimpleNameLookupBuildTicks),
+            DisplayLookupBuildDurationMs = TicksToMilliseconds(DisplayLookupBuildTicks),
+            SimpleNameLookupBuildDurationMs = TicksToMilliseconds(SimpleNameLookupBuildTicks),
+            SlowestProjects = projects
+                .AsValueEnumerable()
+                .OrderByDescending(static project => project.CompilationTicks + project.SymbolTraversalTicks)
+                .Take(10)
+                .Select(static project => project.ToBenchmarkInfo())
+                .ToArray(),
+        };
+    }
+
+    static double TicksToMilliseconds(long ticks)
+        => TimeSpan.FromTicks(ticks).TotalMilliseconds;
+}
+
+sealed class ProjectIndexBuildStats(string projectName)
+{
+    public string ProjectName { get; } = projectName;
+
+    public int EntryCount { get; set; }
+
+    public long CompilationTicks { get; set; }
+
+    public long SymbolTraversalTicks { get; set; }
+
+    public long SourceDeclarationCheckTicks { get; set; }
+
+    public long DisplaySignatureTicks { get; set; }
+
+    public SourceIndexProjectBenchmarkInfo ToBenchmarkInfo()
+        => new()
+        {
+            Project = ProjectName,
+            EntryCount = EntryCount,
+            CompilationDurationMs = TimeSpan.FromTicks(CompilationTicks).TotalMilliseconds,
+            SymbolTraversalDurationMs = TimeSpan.FromTicks(SymbolTraversalTicks).TotalMilliseconds,
+            DisplaySignatureDurationMs = TimeSpan.FromTicks(DisplaySignatureTicks).TotalMilliseconds,
+        };
+}
+
+sealed class LookupBuildBucket
+{
+    public int Count { get; set; }
+
+    public int Position { get; set; }
+
+    public int[] Indexes { get; set; } = [];
+}
+
+readonly record struct ShortNameKey(string Value, int Start, int Length)
+{
+    public ReadOnlySpan<char> Span
+        => Value.AsSpan(Start, Length);
+
+    public override string ToString()
+        => Start is 0 && Length == Value.Length ? Value : Value.Substring(Start, Length);
+}
+
+sealed class ShortNameKeyComparer : IEqualityComparer<ShortNameKey>
+{
+    public static ShortNameKeyComparer Instance { get; } = new();
+
+    public bool Equals(ShortNameKey x, ShortNameKey y)
+        => x.Span.Equals(y.Span, OrdinalIgnoreCase);
+
+    public int GetHashCode(ShortNameKey obj)
+        => string.GetHashCode(obj.Span, OrdinalIgnoreCase);
+}
 
 readonly record struct ResolvedSymbol(SymbolSearchEntry Entry, ISymbol Symbol);
 
@@ -454,9 +657,18 @@ readonly record struct SymbolSearchEntry(
     bool HasShortNameRange
         => ShortNameStart >= 0;
 
-    public static SymbolSearchEntry CreateSource(Project project, ISymbol symbol)
+    public ShortNameKey GetShortNameKey()
     {
-        var (displaySignature, shortNameStart, shortNameLength, kind) = BuildSearchInfo(symbol);
+        if (HasShortNameRange)
+            return new(DisplaySignature, ShortNameStart, ShortNameLength);
+
+        var shortName = SymbolText.GetShortName(Symbol);
+        return new(shortName, 0, shortName.Length);
+    }
+
+    public static SymbolSearchEntry CreateSource(Project project, ISymbol symbol, ProjectIndexBuildStats stats)
+    {
+        var (displaySignature, shortNameStart, shortNameLength, kind) = BuildSearchInfo(symbol, stats);
         return new(symbol, project.Id, -1, displaySignature, shortNameStart, shortNameLength, kind);
     }
 
@@ -466,9 +678,15 @@ readonly record struct SymbolSearchEntry(
         return new(symbol, null, externalAssemblyIndex, displaySignature, shortNameStart, shortNameLength, kind);
     }
 
-    static (string DisplaySignature, int ShortNameStart, int ShortNameLength, SymbolSearchKind Kind) BuildSearchInfo(ISymbol symbol)
+    static (string DisplaySignature, int ShortNameStart, int ShortNameLength, SymbolSearchKind Kind) BuildSearchInfo(
+        ISymbol symbol,
+        ProjectIndexBuildStats? stats = null)
     {
+        var displayStarted = Stopwatch.GetTimestamp();
         var displaySignature = SymbolText.GetDisplaySignature(symbol);
+        if (stats is not null)
+            stats.DisplaySignatureTicks += Stopwatch.GetElapsedTime(displayStarted).Ticks;
+
         var (shortNameStart, shortNameLength) = FindShortNameRange(symbol, displaySignature);
         return (displaySignature, shortNameStart, shortNameLength, GetSearchKind(symbol));
     }
