@@ -387,7 +387,7 @@ public sealed class WorkspaceSessionManager
 
             if (string.Equals(entry.Origin, "metadata", StringComparison.Ordinal))
             {
-                var metadataResult = IlViewer.ViewMetadata(resolved, index.GetAssemblyPath(entry), compact, ct);
+                var metadataResult = IlViewer.ViewMetadata(resolved, index.GetAssemblyPath(entry), compact, ct, LogViewIlException);
                 return new()
                 {
                     Success = metadataResult.Success,
@@ -412,7 +412,7 @@ public sealed class WorkspaceSessionManager
                 };
             }
 
-            var result = await IlViewer.ViewAsync(project, resolved.Symbol, compact, ct);
+            var result = await IlViewer.ViewAsync(project, resolved.Symbol, compact, ct, LogViewIlException);
             return new()
             {
                 Success = result.Success,
@@ -424,6 +424,9 @@ public sealed class WorkspaceSessionManager
                 EmitDiagnostics = result.EmitDiagnostics,
                 Methods = result.Methods,
             };
+
+            void LogViewIlException(Exception exception)
+                => log.ZLogError($"view_il failed while processing '{symbol}'.", exception);
         }
         finally
         {

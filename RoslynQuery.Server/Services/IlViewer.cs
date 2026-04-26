@@ -32,82 +32,85 @@ static class IlViewer
         }
     }
 
-    public static async Task<ViewIlResponse> ViewAsync(Project project, ISymbol symbol, bool compact, CancellationToken ct)
+    public static async Task<ViewIlResponse> ViewAsync(
+        Project project,
+        ISymbol symbol,
+        bool compact,
+        CancellationToken ct,
+        Action<Exception> logException
+    )
     {
-        var compilation = await project.GetCompilationAsync(ct);
-        if (compilation is null)
-            return new() { Error = "The project did not produce a compilation." };
-
-        await using var peStream = new MemoryStream();
-        EmitResult emitResult;
         try
         {
-            emitResult = compilation.Emit(peStream, cancellationToken: ct);
+            var compilation = await project.GetCompilationAsync(ct);
+            if (compilation is null)
+                return new() { Error = "The project did not produce a compilation." };
+
+            await using var peStream = new MemoryStream();
+            var emitResult = compilation.Emit(peStream, cancellationToken: ct);
+            if (!emitResult.Success)
+            {
+                return TryViewStaleAssembly(
+                    project,
+                    compilation,
+                    symbol,
+                    compact,
+                    FormatEmitDiagnostics(emitResult.Diagnostics),
+                    fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed",
+                    logException
+                );
+            }
+
+            peStream.Position = 0;
+            using var peReader = new PEReader(peStream);
+            var result = ViewPeReader(symbol, peReader, compact, metadataKind: "emitted metadata");
+            return !result.Success && result.Error is null
+                ? new() { Error = "No emitted method body was found for the symbol." }
+                : result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
-            throw;
+            logException(exception);
+            return new() { Error = "IL emission was canceled or timed out." };
         }
         catch (Exception exception)
         {
-            return TryViewStaleAssembly(
-                project,
-                compilation,
-                symbol,
-                compact,
-                [$"Compilation emit threw {exception.GetType().Name}: {exception.Message}"],
-                fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed"
-            );
+            logException(exception);
+            return new() { Error = FormatExceptionError("Source IL generation", exception) };
         }
-
-        if (!emitResult.Success)
-        {
-            return TryViewStaleAssembly(
-                project,
-                compilation,
-                symbol,
-                compact,
-                FormatEmitDiagnostics(emitResult.Diagnostics),
-                fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed"
-            );
-        }
-
-        peStream.Position = 0;
-        using var peReader = new PEReader(peStream);
-        var reader = peReader.GetMetadataReader();
-        var options = new IlFormatOptions(compact);
-        var typeSymbol = symbol.ContainingType;
-        if (typeSymbol is null)
-            return new() { Error = "The symbol is not declared on a type." };
-
-        var typeHandle = FindType(reader, typeSymbol);
-        if (typeHandle.IsNil)
-            return new() { Error = "The symbol's containing type was not found in emitted metadata." };
-
-        var methods = symbol switch
-        {
-            IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
-            IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),
-            _                              => [],
-        };
-
-        return methods.Length is 0
-            ? new() { Error = "No emitted method body was found for the symbol." }
-            : new() { Success = true, Methods = methods };
     }
 
-    public static ViewIlResponse ViewMetadata(ResolvedSymbol resolved, string? assemblyPath, bool compact, CancellationToken ct)
+    public static ViewIlResponse ViewMetadata(
+        ResolvedSymbol resolved,
+        string? assemblyPath,
+        bool compact,
+        CancellationToken ct,
+        Action<Exception> logException
+    )
     {
-        ct.ThrowIfCancellationRequested();
+        try
+        {
+            ct.ThrowIfCancellationRequested();
 
-        if (assemblyPath is not { Length: > 0 })
-            return new() { Error = "The symbol's metadata assembly path is unavailable, so IL is unavailable." };
+            if (assemblyPath is not { Length: > 0 })
+                return new() { Error = "The symbol's metadata assembly path is unavailable, so IL is unavailable." };
 
-        var result = ViewAssembly(resolved.Symbol, assemblyPath, compact);
-        if (result.Success || result.Error is not null)
-            return result;
+            var result = ViewAssembly(resolved.Symbol, assemblyPath, compact);
+            if (result.Success || result.Error is not null)
+                return result;
 
-        return new() { Error = "No metadata method body was found for the symbol." };
+            return new() { Error = "No metadata method body was found for the symbol." };
+        }
+        catch (OperationCanceledException exception)
+        {
+            logException(exception);
+            return new() { Error = "IL viewing was canceled or timed out." };
+        }
+        catch (Exception exception)
+        {
+            logException(exception);
+            return new() { Error = FormatExceptionError("Metadata IL viewing", exception) };
+        }
     }
 
     static ViewIlResponse TryViewStaleAssembly(
@@ -116,7 +119,8 @@ static class IlViewer
         ISymbol symbol,
         bool compact,
         string[] emitDiagnostics,
-        string fallbackFailurePrefix
+        string fallbackFailurePrefix,
+        Action<Exception> logException
     )
     {
         var assemblyPath = FindFallbackAssemblyPath(project, compilation);
@@ -129,7 +133,7 @@ static class IlViewer
             };
         }
 
-        var fallback = ViewAssembly(symbol, assemblyPath, compact);
+        var fallback = ViewAssembly(symbol, assemblyPath, compact, logException);
         if (!fallback.Success)
         {
             return new()
@@ -148,32 +152,21 @@ static class IlViewer
         };
     }
 
-    static ViewIlResponse ViewAssembly(ISymbol symbol, string assemblyPath, bool compact)
+    static ViewIlResponse ViewAssembly(
+        ISymbol symbol,
+        string assemblyPath,
+        bool compact,
+        Action<Exception>? logException = null
+    )
     {
         try
         {
             using var stream = File.OpenRead(assemblyPath);
             using var peReader = new PEReader(stream);
-            var reader = peReader.GetMetadataReader();
-            var options = new IlFormatOptions(compact);
-            var typeSymbol = symbol.ContainingType;
-            if (typeSymbol is null)
-                return new() { Error = "The symbol is not declared on a type." };
-
-            var typeHandle = FindType(reader, typeSymbol);
-            if (typeHandle.IsNil)
-                return new() { Error = "The symbol's containing type was not found in metadata." };
-
-            var methods = symbol switch
-            {
-                IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
-                IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),
-                _                              => [],
-            };
-
-            return methods.Length is 0
+            var result = ViewPeReader(symbol, peReader, compact, metadataKind: "metadata");
+            return !result.Success && result.Error is null
                 ? new() { Error = "No metadata method body was found for the symbol." }
-                : new() { Success = true, Methods = methods };
+                : result;
         }
         catch (FileNotFoundException exception)
         {
@@ -187,7 +180,39 @@ static class IlViewer
         {
             return new() { Error = $"The metadata assembly is not a valid PE image: {exception.Message}" };
         }
+        catch (Exception exception)
+        {
+            logException?.Invoke(exception);
+            return new() { Error = FormatExceptionError("IL decoding", exception) };
+        }
     }
+
+    static ViewIlResponse ViewPeReader(ISymbol symbol, PEReader peReader, bool compact, string metadataKind)
+    {
+        var reader = peReader.GetMetadataReader();
+        var options = new IlFormatOptions(compact);
+        var typeSymbol = symbol.ContainingType;
+        if (typeSymbol is null)
+            return new() { Error = "The symbol is not declared on a type." };
+
+        var typeHandle = FindType(reader, typeSymbol);
+        if (typeHandle.IsNil)
+            return new() { Error = $"The symbol's containing type was not found in {metadataKind}." };
+
+        var methods = symbol switch
+        {
+            IMethodSymbol methodSymbol     => BuildMethodInfos(reader, peReader, typeHandle, methodSymbol, options),
+            IPropertySymbol propertySymbol => BuildPropertyMethodInfos(reader, peReader, typeHandle, propertySymbol, options),
+            _                              => [],
+        };
+
+        return methods.Length is 0
+            ? new()
+            : new() { Success = true, Methods = methods };
+    }
+
+    static string FormatExceptionError(string operation, Exception exception)
+        => $"{operation} failed with {exception.GetType().Name}: {exception.Message}";
 
     static string[] FormatEmitDiagnostics(ImmutableArray<Diagnostic> diagnostics)
         => diagnostics
