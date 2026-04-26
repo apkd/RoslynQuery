@@ -16,7 +16,7 @@ public sealed class WorkspaceSessionManagerTests
     }
 
     [Test]
-    public async Task LoadWorkspaceDirectoryLoadsSolutionAndStatusListsProjects()
+    public async Task LoadWorkspaceDirectoryLoadsSolutionAndStatusReturnsProjectAndDiagnosticCounts()
     {
         await using var fixture = FixtureWorkspace.Create();
         var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
@@ -27,11 +27,12 @@ public sealed class WorkspaceSessionManagerTests
         await Assert.That(opened.Success).IsTrue();
         await Assert.That(opened.TargetKind).IsEqualTo("solution");
         await Assert.That(opened.ResolvedPath).IsEqualTo(fixture.SolutionPath);
-        await Assert.That(status.Projects).Count().IsEqualTo(3);
-        foreach (var project in status.Projects)
-            await Assert.That(project.TargetFramework).IsEqualTo("net10.0");
-
-        await Assert.That(status.Projects).Contains(project => project.Documents.Contains(fixture.ConsumerPath, StringComparer.OrdinalIgnoreCase));
+        await Assert.That(status.ProjectCount).IsEqualTo(3);
+        await Assert.That(status.Projects).IsEmpty();
+        await Assert.That(status.Diagnostics).IsEmpty();
+        await Assert.That(status.ErrorCount).IsEqualTo(0);
+        await Assert.That(status.WarningCount).IsEqualTo(0);
+        await Assert.That(status.OtherDiagnosticCount).IsEqualTo(0);
     }
 
     [Test]
@@ -50,10 +51,9 @@ public sealed class WorkspaceSessionManagerTests
         await Assert.That(opened.Status.ExcludedProjectCount).IsEqualTo(1);
         await Assert.That(opened.Status.Messages).DoesNotContain(message => string.Equals(message.Severity, "info", Ordinal));
         await Assert.That(formatted).Contains("Projects: 2 (1 excluded via .roslynqueryignore)", Ordinal);
-        await Assert.That(status.Projects).Count().IsEqualTo(2);
+        await Assert.That(status.ProjectCount).IsEqualTo(2);
         await Assert.That(status.ExcludedProjectCount).IsEqualTo(1);
-        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.Name, "Sample.Other", Ordinal));
-        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.ProjectPath, fixture.OtherProjectPath, OrdinalIgnoreCase));
+        await Assert.That(status.Projects).IsEmpty();
         await Assert.That(widget.Success).IsTrue();
         await Assert.That(widget.Symbol?.ContainingNamespace).IsEqualTo("Sample.Core");
     }
@@ -71,8 +71,8 @@ public sealed class WorkspaceSessionManagerTests
         var status = await manager.StatusAsync(CancellationToken.None);
 
         await Assert.That(opened.Success).IsTrue();
-        await Assert.That(status.Projects).Count().IsEqualTo(2);
-        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.Name, "Sample.Other", Ordinal));
+        await Assert.That(status.ProjectCount).IsEqualTo(2);
+        await Assert.That(status.Projects).IsEmpty();
     }
 
     [Test]
@@ -92,9 +92,9 @@ public sealed class WorkspaceSessionManagerTests
         var status = await manager.StatusAsync(CancellationToken.None);
 
         await Assert.That(opened.Success).IsTrue();
-        await Assert.That(status.Projects).Count().IsEqualTo(1);
+        await Assert.That(status.ProjectCount).IsEqualTo(1);
         await Assert.That(status.ExcludedProjectCount).IsEqualTo(2);
-        await Assert.That(status.Projects).Contains(project => string.Equals(project.Name, "Sample.Other", Ordinal));
+        await Assert.That(status.Projects).IsEmpty();
     }
 
     [Test]
@@ -152,15 +152,13 @@ public sealed class WorkspaceSessionManagerTests
         await using var fixture = FixtureWorkspace.Create();
         var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
         var wslSolutionPath = ToWslPath(fixture.SolutionPath);
-        var wslAppProjectPath = ToWslPath(fixture.AppProjectPath);
-        var wslConsumerPath = ToWslPath(fixture.ConsumerPath);
-
         var opened = await manager.LoadAsync(wslSolutionPath, CancellationToken.None);
         var status = await manager.StatusAsync(CancellationToken.None);
 
         await Assert.That(opened.Success).IsTrue();
-        await Assert.That(status.Projects).Contains(project => string.Equals(project.ProjectPath, wslAppProjectPath, Ordinal));
-        await Assert.That(status.Projects).Contains(project => project.Documents.Contains(wslConsumerPath, StringComparer.Ordinal));
+        await Assert.That(status.TargetPath).IsEqualTo(wslSolutionPath);
+        await Assert.That(status.ProjectCount).IsEqualTo(3);
+        await Assert.That(status.Projects).IsEmpty();
     }
 
     [Test]
@@ -399,6 +397,8 @@ public sealed class WorkspaceSessionManagerTests
         await Assert.That(stale.Diagnostics).IsEmpty();
         await Assert.That(reloaded.Success).IsTrue();
         await Assert.That(after.Diagnostics).IsEmpty();
+        await Assert.That(after.ErrorCount).IsGreaterThan(0);
+        await Assert.That(after.WarningCount).IsEqualTo(0);
         await Assert.That(diagnostics.Diagnostics).Contains(diagnostic => string.Equals(diagnostic.Location?.FilePath, fixture.DogPath, OrdinalIgnoreCase));
         await Assert.That(ToolTextFormatter.FormatShowDiagnostics(diagnostics)).Contains("Diagnostics (all):", Ordinal);
     }

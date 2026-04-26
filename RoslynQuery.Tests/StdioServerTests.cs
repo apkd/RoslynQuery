@@ -64,7 +64,9 @@ public sealed class StdioServerTests
         await Assert.That(opened).Contains("Loaded solution.", Ordinal);
         await Assert.That(opened).Contains(wslSolutionPath, Ordinal);
         await Assert.That(status).Contains($"Path: {wslSolutionPath}", Ordinal);
-        await Assert.That(status).Contains("- Sample.App [net10.0] src/Sample.App/Sample.App.csproj", Ordinal);
+        await Assert.That(status).Contains("Projects: 3", Ordinal);
+        await Assert.That(status).Contains("Diagnostics: 0 errors, 0 warnings, 0 other", Ordinal);
+        await Assert.That(status).DoesNotContain("- Sample.App", Ordinal);
     }
 
     [Test]

@@ -7,6 +7,9 @@ public readonly record struct WorkspaceStatusResponse()
     public string? TargetKind { get; init; }
     public int ProjectCount { get; init; }
     public int ExcludedProjectCount { get; init; }
+    public int ErrorCount { get; init; }
+    public int WarningCount { get; init; }
+    public int OtherDiagnosticCount { get; init; }
     public DateTimeOffset? LoadedAtUtc { get; init; }
     public double? LastLoadDurationMs { get; init; }
     public WorkspaceMessageDto[] Messages { get; init; } = [];

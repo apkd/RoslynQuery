@@ -44,7 +44,7 @@ public sealed class WorkspaceSessionManager
         await gate.WaitAsync(ct);
         try
         {
-            return await BuildStatusAsync(activeSession, ct, includeDiagnostics: false);
+            return await BuildStatusAsync(activeSession, ct, includeDiagnosticCounts: true, includeProjects: false);
         }
         finally
         {
@@ -473,6 +473,7 @@ public sealed class WorkspaceSessionManager
         CancellationToken ct,
         bool includeDocuments = true,
         bool includeDiagnostics = false,
+        bool includeDiagnosticCounts = false,
         bool includeProjects = true
     )
     {
@@ -481,6 +482,10 @@ public sealed class WorkspaceSessionManager
 
         var projectCount = CountCSharpProjects(session);
         var projects = includeProjects ? BuildProjectInfos(session, includeDocuments) : [];
+        var diagnostics = includeDiagnostics || includeDiagnosticCounts
+            ? await session.GetDiagnosticsAsync(ct)
+            : [];
+        var diagnosticCounts = CountDiagnostics(diagnostics);
         return new()
         {
             IsBound = true,
@@ -488,14 +493,39 @@ public sealed class WorkspaceSessionManager
             TargetKind = session.TargetKind,
             ProjectCount = projectCount,
             ExcludedProjectCount = session.ExcludedProjectCount,
+            ErrorCount = diagnosticCounts.Errors,
+            WarningCount = diagnosticCounts.Warnings,
+            OtherDiagnosticCount = diagnosticCounts.Other,
             LoadedAtUtc = session.LoadedAtUtc,
             LastLoadDurationMs = session.LoadDuration.TotalMilliseconds,
             Messages = session.Messages.ToArray(),
             Projects = projects,
-            Diagnostics = includeDiagnostics
-                ? await session.GetDiagnosticsAsync(ct)
-                : [],
+            Diagnostics = includeDiagnostics ? diagnostics : [],
         };
+    }
+
+    static (int Errors, int Warnings, int Other) CountDiagnostics(DiagnosticInfo[] diagnostics)
+    {
+        var errors = 0;
+        var warnings = 0;
+        var other = 0;
+        foreach (var diagnostic in diagnostics)
+        {
+            switch (diagnostic.Severity)
+            {
+                case "error":
+                    errors++;
+                    break;
+                case "warning":
+                    warnings++;
+                    break;
+                default:
+                    other++;
+                    break;
+            }
+        }
+
+        return (errors, warnings, other);
     }
 
     static int CountCSharpProjects(WorkspaceSession session)

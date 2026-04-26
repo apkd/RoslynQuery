@@ -13,8 +13,6 @@ static class ToolTextFormatter
         var builder = ZString.CreateStringBuilder();
         try
         {
-            var workspaceRoot = GetDirectoryPath(response.TargetPath);
-
             builder.Append("Workspace: ");
             builder.Append(response.TargetKind ?? "unknown");
             builder.Append('\n');
@@ -26,7 +24,8 @@ static class ToolTextFormatter
             }
 
             AppendWorkspaceMessages(ref builder, response.Messages);
-            AppendProjects(ref builder, response.Projects, response.ExcludedProjectCount, workspaceRoot);
+            AppendProjectCount(ref builder, response.ProjectCount, response.ExcludedProjectCount);
+            AppendDiagnosticCounts(ref builder, response.ErrorCount, response.WarningCount, response.OtherDiagnosticCount);
             return Finish(ref builder);
         }
         finally
@@ -1131,6 +1130,18 @@ static class ToolTextFormatter
             builder.Append(" excluded via .roslynqueryignore)");
         }
 
+        builder.Append('\n');
+    }
+
+    static void AppendDiagnosticCounts(ref Utf16ValueStringBuilder builder, int errorCount, int warningCount, int otherCount)
+    {
+        builder.Append("Diagnostics: ");
+        builder.Append(errorCount);
+        builder.Append(" errors, ");
+        builder.Append(warningCount);
+        builder.Append(" warnings, ");
+        builder.Append(otherCount);
+        builder.Append(" other");
         builder.Append('\n');
     }
 
