@@ -646,6 +646,23 @@ Junie in JetBrains IDEs and Junie CLI use the same MCP config file format. Use `
 
 - `load_workspace`: Opens the solution/project for analysis. Accepts a directory path, `.sln`, `.slnx`, or `.csproj`. Calling it again with the same path reloads the workspace from disk.
 
+To exclude projects from analsis, create a `.roslynqueryignore` file next to the solution file. 
+Add one project pattern per line. This can improve the initial load performance.
+
+```gitignore
+Assembly-CSharp-Editor.csproj
+Assembly-CSharp-Editor-firstpass.csproj
+*Editor.csproj
+*Tests.csproj
+Unity.Services*.csproj
+Unity.Searcher*.csproj
+Unity.Recorder*.csproj
+Unity.ProBuilder*.csproj
+Unity.Polybrush*.csproj
+Unity.Multiplayer.Center*.csproj
+Unity.MemoryProfiler*.csproj
+```
+
 - `status`: Lists loaded projects and prints compilation diagnostics.
 
 ## Search and analysis

@@ -403,11 +403,15 @@ public sealed class WorkspaceSessionManager
         var startedAtUtc = DateTimeOffset.UtcNow;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
+        using var loadTarget = WorkspaceProjectFilter.Create(path, targetKind);
+
         Solution solution;
         if (string.Equals(targetKind, "project", StringComparison.Ordinal))
             solution = (await workspace.OpenProjectAsync(path, cancellationToken: ct)).Solution;
         else
-            solution = await workspace.OpenSolutionAsync(path, cancellationToken: ct);
+            solution = await workspace.OpenSolutionAsync(loadTarget.LoadPath, cancellationToken: ct);
+
+        solution = loadTarget.ApplyFilter(solution);
 
         stopwatch.Stop();
 
@@ -419,6 +423,7 @@ public sealed class WorkspaceSessionManager
             pathStyle,
             startedAtUtc,
             stopwatch.Elapsed,
+            loadTarget.ExcludedProjectCount,
             messages
         );
     }
@@ -442,6 +447,7 @@ public sealed class WorkspaceSessionManager
             TargetPath = WorkspacePathNormalizer.Format(session.TargetPath, session.PathStyle),
             TargetKind = session.TargetKind,
             ProjectCount = projectCount,
+            ExcludedProjectCount = session.ExcludedProjectCount,
             LoadedAtUtc = session.LoadedAtUtc,
             LastLoadDurationMs = session.LoadDuration.TotalMilliseconds,
             Messages = session.Messages.ToArray(),
@@ -1187,6 +1193,7 @@ sealed class WorkspaceSession(
     WorkspacePathStyle pathStyle,
     DateTimeOffset loadedAtUtc,
     TimeSpan loadDuration,
+    int excludedProjectCount,
     WorkspaceMessageBuffer messages)
     : IDisposable
 {
@@ -1209,6 +1216,8 @@ sealed class WorkspaceSession(
     public DateTimeOffset LoadedAtUtc { get; } = loadedAtUtc;
 
     public TimeSpan LoadDuration { get; } = loadDuration;
+
+    public int ExcludedProjectCount { get; } = excludedProjectCount;
 
     public WorkspaceMessageBuffer Messages { get; } = messages;
 

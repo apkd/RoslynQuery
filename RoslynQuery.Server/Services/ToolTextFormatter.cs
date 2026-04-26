@@ -26,7 +26,7 @@ static class ToolTextFormatter
             }
 
             AppendWorkspaceMessages(ref builder, response.Messages);
-            AppendProjects(ref builder, response.Projects, workspaceRoot);
+            AppendProjects(ref builder, response.Projects, response.ExcludedProjectCount, workspaceRoot);
             AppendDiagnostics(ref builder, response.Diagnostics, workspaceRoot);
             return Finish(ref builder);
         }
@@ -74,9 +74,7 @@ static class ToolTextFormatter
                 builder.Append('\n');
             }
 
-            builder.Append("Projects: ");
-            builder.Append(status.ProjectCount);
-            builder.Append('\n');
+            AppendProjectCount(ref builder, status.ProjectCount, status.ExcludedProjectCount);
 
             if (status.LastLoadDurationMs is { } lastLoadDurationMs)
             {
@@ -1086,11 +1084,29 @@ static class ToolTextFormatter
         }
     }
 
-    static void AppendProjects(ref Utf16ValueStringBuilder builder, IReadOnlyList<ProjectInfo> projects, string? workspaceRoot)
+    static void AppendProjectCount(ref Utf16ValueStringBuilder builder, int projectCount, int excludedProjectCount)
+    {
+        builder.Append("Projects: ");
+        builder.Append(projectCount);
+        if (excludedProjectCount > 0)
+        {
+            builder.Append(" (");
+            builder.Append(excludedProjectCount);
+            builder.Append(" excluded via .roslynqueryignore)");
+        }
+
+        builder.Append('\n');
+    }
+
+    static void AppendProjects(
+        ref Utf16ValueStringBuilder builder,
+        IReadOnlyList<ProjectInfo> projects,
+        int excludedProjectCount,
+        string? workspaceRoot
+    )
     {
         builder.Append('\n');
-        builder.Append("Projects:");
-        builder.Append('\n');
+        AppendProjectCount(ref builder, projects.Count, excludedProjectCount);
         if (projects.Count is 0)
         {
             builder.Append("- none");

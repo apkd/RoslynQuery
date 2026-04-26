@@ -35,6 +35,47 @@ public sealed class WorkspaceSessionManagerTests
     }
 
     [Test]
+    public async Task LoadWorkspaceHonorsRoslynQueryIgnoreProjectGlobs()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        File.WriteAllText(Path.Combine(fixture.RootPath, ".roslynqueryignore"), "src/*Other/*.csproj");
+        var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+        var opened = await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
+        var status = await manager.StatusAsync(CancellationToken.None);
+        var widget = await manager.DescribeSymbolAsync("Widget", CancellationToken.None);
+        var formatted = ToolTextFormatter.FormatLoadWorkspace(opened);
+
+        await Assert.That(opened.Success).IsTrue();
+        await Assert.That(opened.Status.ExcludedProjectCount).IsEqualTo(1);
+        await Assert.That(opened.Status.Messages).DoesNotContain(message => string.Equals(message.Severity, "info", Ordinal));
+        await Assert.That(formatted).Contains("Projects: 2 (1 excluded via .roslynqueryignore)", Ordinal);
+        await Assert.That(status.Projects).Count().IsEqualTo(2);
+        await Assert.That(status.ExcludedProjectCount).IsEqualTo(1);
+        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.Name, "Sample.Other", Ordinal));
+        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.ProjectPath, fixture.OtherProjectPath, OrdinalIgnoreCase));
+        await Assert.That(widget.Success).IsTrue();
+        await Assert.That(widget.Symbol?.ContainingNamespace).IsEqualTo("Sample.Core");
+    }
+
+    [Test]
+    public async Task LoadWorkspaceHonorsRoslynQueryIgnoreForClassicSolutionFiles()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        var solutionPath = Path.Combine(fixture.RootPath, "Sample.sln");
+        File.WriteAllText(solutionPath, ClassicSolution);
+        File.WriteAllText(Path.Combine(fixture.RootPath, ".roslynqueryignore"), "Sample.Other");
+        var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+        var opened = await manager.LoadAsync(solutionPath, CancellationToken.None);
+        var status = await manager.StatusAsync(CancellationToken.None);
+
+        await Assert.That(opened.Success).IsTrue();
+        await Assert.That(status.Projects).Count().IsEqualTo(2);
+        await Assert.That(status.Projects).DoesNotContain(project => string.Equals(project.Name, "Sample.Other", Ordinal));
+    }
+
+    [Test]
     public async Task LoadWorkspacePrimesIndexBuildInBackground()
     {
         await using var fixture = FixtureWorkspace.Create();
@@ -358,4 +399,30 @@ public sealed class WorkspaceSessionManagerTests
         var drive = char.ToLowerInvariant(windowsPath[0]);
         return $"/mnt/{drive}/{windowsPath[3..].Replace('\\', '/')}";
     }
+
+    const string ClassicSolution = """
+                                   Microsoft Visual Studio Solution File, Format Version 12.00
+                                   # Visual Studio Version 17
+                                   VisualStudioVersion = 17.0.31903.59
+                                   MinimumVisualStudioVersion = 10.0.40219.1
+                                   Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.Core", "src\Sample.Core\Sample.Core.csproj", "{11111111-1111-1111-1111-111111111111}"
+                                   EndProject
+                                   Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.App", "src\Sample.App\Sample.App.csproj", "{22222222-2222-2222-2222-222222222222}"
+                                   EndProject
+                                   Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample.Other", "src\Sample.Other\Sample.Other.csproj", "{33333333-3333-3333-3333-333333333333}"
+                                   EndProject
+                                   Global
+                                       GlobalSection(SolutionConfigurationPlatforms) = preSolution
+                                           Debug|Any CPU = Debug|Any CPU
+                                       EndGlobalSection
+                                       GlobalSection(ProjectConfigurationPlatforms) = postSolution
+                                           {11111111-1111-1111-1111-111111111111}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                                           {11111111-1111-1111-1111-111111111111}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                                           {22222222-2222-2222-2222-222222222222}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                                           {22222222-2222-2222-2222-222222222222}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                                           {33333333-3333-3333-3333-333333333333}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                                           {33333333-3333-3333-3333-333333333333}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                                       EndGlobalSection
+                                   EndGlobal
+                                   """;
 }

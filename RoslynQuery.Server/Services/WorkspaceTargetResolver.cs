@@ -72,6 +72,7 @@ static class WorkspaceTargetResolver
         var solutions = EnumerateCandidates(root, ".sln", recurseSubdirectories)
             .AsValueEnumerable()
             .Concat(EnumerateCandidates(root, ".slnx", recurseSubdirectories).AsValueEnumerable())
+            .Where(static path => !Path.GetFileName(path).Contains(".roslynquery.", OrdinalIgnoreCase))
             .OrderBy(static x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
