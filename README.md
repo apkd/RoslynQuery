@@ -647,7 +647,7 @@ Junie in JetBrains IDEs and Junie CLI use the same MCP config file format. Use `
 - `load_workspace`: Opens the solution/project for analysis. Accepts a directory path, `.sln`, `.slnx`, or `.csproj`. Calling it again with the same path reloads the workspace from disk.
 
 To exclude projects from analsis, create a `.roslynqueryignore` file next to the solution file. 
-Add one project pattern per line. This can improve the initial load performance.
+Add one project pattern per line. Patterns support `*` and `?` globs, and negation with `!`. This can improve the initial load performance.
 
 ```gitignore
 Assembly-CSharp-Editor.csproj

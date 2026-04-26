@@ -76,6 +76,28 @@ public sealed class WorkspaceSessionManagerTests
     }
 
     [Test]
+    public async Task LoadWorkspaceHonorsRoslynQueryIgnoreNegation()
+    {
+        await using var fixture = FixtureWorkspace.Create();
+        File.WriteAllText(
+            Path.Combine(fixture.RootPath, ".roslynqueryignore"),
+            """
+            *.csproj
+            !src/Sample.Other/Sample.Other.csproj
+            """
+        );
+        var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+        var opened = await manager.LoadAsync(fixture.RootPath, CancellationToken.None);
+        var status = await manager.StatusAsync(CancellationToken.None);
+
+        await Assert.That(opened.Success).IsTrue();
+        await Assert.That(status.Projects).Count().IsEqualTo(1);
+        await Assert.That(status.ExcludedProjectCount).IsEqualTo(2);
+        await Assert.That(status.Projects).Contains(project => string.Equals(project.Name, "Sample.Other", Ordinal));
+    }
+
+    [Test]
     public async Task LoadWorkspacePrimesIndexBuildInBackground()
     {
         await using var fixture = FixtureWorkspace.Create();

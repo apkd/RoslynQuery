@@ -188,21 +188,21 @@ static class WorkspaceProjectFilter
 
     internal sealed class ProjectIgnoreFilter
     {
-        readonly Regex[] patterns;
+        readonly IgnoreRule[] rules;
 
-        ProjectIgnoreFilter(Regex[] patterns) => this.patterns = patterns;
+        ProjectIgnoreFilter(IgnoreRule[] rules) => this.rules = rules;
 
-        public bool IsEmpty => patterns.Length is 0;
+        public bool IsEmpty => rules.Length is 0;
 
         public static ProjectIgnoreFilter Load(string path)
         {
-            var patterns = File.ReadLines(path, Encoding.UTF8)
-                .Select(static line => line.Trim())
-                .Where(static line => line.Length > 0 && !line.StartsWith('#'))
-                .Select(static line => new Regex(GlobToRegex(NormalizePattern(line)), RegexOptions.CultureInvariant | RegexOptions.IgnoreCase))
+            var rules = File.ReadLines(path, Encoding.UTF8)
+                .Select(static line => TryParseRule(line.Trim()))
+                .Where(static rule => rule is not null)
+                .Select(static rule => rule!.Value)
                 .ToArray();
 
-            return new(patterns);
+            return new(rules);
         }
 
         public bool IsMatch(string solutionDirectory, string projectPath, string? projectName = null)
@@ -226,7 +226,30 @@ static class WorkspaceProjectFilter
                 NormalizePath(shortName),
             };
 
-            return patterns.Any(pattern => candidates.Any(candidate => pattern.IsMatch(candidate)));
+            var excluded = false;
+            foreach (var rule in rules)
+            {
+                if (candidates.Any(candidate => rule.Pattern.IsMatch(candidate)))
+                    excluded = !rule.Negated;
+            }
+
+            return excluded;
+        }
+
+        static IgnoreRule? TryParseRule(string line)
+        {
+            if (line.Length is 0 || line.StartsWith('#'))
+                return null;
+
+            var negated = line[0] == '!';
+            var pattern = negated ? line[1..].TrimStart() : line;
+            if (pattern.Length is 0)
+                return null;
+
+            return new(
+                new Regex(GlobToRegex(NormalizePattern(pattern)), RegexOptions.CultureInvariant | RegexOptions.IgnoreCase),
+                negated
+            );
         }
 
         static string NormalizePattern(string pattern)
@@ -262,6 +285,8 @@ static class WorkspaceProjectFilter
             builder.Append('$');
             return builder.ToString();
         }
+
+        readonly record struct IgnoreRule(Regex Pattern, bool Negated);
     }
 }
 
