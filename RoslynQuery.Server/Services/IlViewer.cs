@@ -40,33 +40,10 @@ static class IlViewer
         Action<Exception> logException
     )
     {
+        Compilation? compilation;
         try
         {
-            var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null)
-                return new() { Error = "The project did not produce a compilation." };
-
-            await using var peStream = new MemoryStream();
-            var emitResult = compilation.Emit(peStream, cancellationToken: ct);
-            if (!emitResult.Success)
-            {
-                return TryViewStaleAssembly(
-                    project,
-                    compilation,
-                    symbol,
-                    compact,
-                    FormatEmitDiagnostics(emitResult.Diagnostics),
-                    fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed",
-                    logException
-                );
-            }
-
-            peStream.Position = 0;
-            using var peReader = new PEReader(peStream);
-            var result = ViewPeReader(symbol, peReader, compact, metadataKind: "emitted metadata");
-            return !result.Success && result.Error is null
-                ? new() { Error = "No emitted method body was found for the symbol." }
-                : result;
+            compilation = await project.GetCompilationAsync(ct);
         }
         catch (OperationCanceledException exception)
         {
@@ -76,7 +53,63 @@ static class IlViewer
         catch (Exception exception)
         {
             logException(exception);
-            return new() { Error = FormatExceptionError("Source IL generation", exception) };
+            return new() { Error = FormatExceptionError("Source compilation", exception) };
+        }
+
+        if (compilation is null)
+            return new() { Error = "The project did not produce a compilation." };
+
+        await using var peStream = new MemoryStream();
+        EmitResult emitResult;
+        try
+        {
+            emitResult = compilation.Emit(peStream, cancellationToken: ct);
+        }
+        catch (OperationCanceledException exception)
+        {
+            logException(exception);
+            return new() { Error = "IL emission was canceled or timed out." };
+        }
+        catch (Exception exception)
+        {
+            logException(exception);
+            return TryViewStaleAssembly(
+                project,
+                compilation,
+                symbol,
+                compact,
+                [FormatExceptionError("Source emit", exception)],
+                fallbackFailurePrefix: "Source emit failed, and stale IL fallback failed",
+                logException
+            );
+        }
+
+        if (!emitResult.Success)
+        {
+            return TryViewStaleAssembly(
+                project,
+                compilation,
+                symbol,
+                compact,
+                FormatEmitDiagnostics(emitResult.Diagnostics),
+                fallbackFailurePrefix: "The project could not be compiled, and stale IL fallback failed",
+                logException
+            );
+        }
+
+        try
+        {
+            peStream.Position = 0;
+            using var peReader = new PEReader(peStream);
+            var result = ViewPeReader(symbol, peReader, compact, metadataKind: "emitted metadata");
+            return !result.Success && result.Error is null
+                ? new() { Error = "No emitted method body was found for the symbol." }
+                : result;
+        }
+        catch (Exception exception)
+        {
+            logException(exception);
+            return new() { Error = FormatExceptionError("Source IL decoding", exception) };
         }
     }
 
@@ -123,7 +156,21 @@ static class IlViewer
         Action<Exception> logException
     )
     {
-        var assemblyPath = FindFallbackAssemblyPath(project, compilation);
+        string? assemblyPath;
+        try
+        {
+            assemblyPath = FindFallbackAssemblyPath(project, compilation);
+        }
+        catch (Exception exception)
+        {
+            logException(exception);
+            return new()
+            {
+                Error = $"{fallbackFailurePrefix}: {FormatExceptionError("stale IL assembly resolution", exception)}",
+                EmitDiagnostics = emitDiagnostics,
+            };
+        }
+
         if (assemblyPath is null)
         {
             return new()
@@ -143,10 +190,21 @@ static class IlViewer
             };
         }
 
+        string fallbackPath;
+        try
+        {
+            fallbackPath = FormatFallbackAssemblyPath(project, assemblyPath);
+        }
+        catch (Exception exception)
+        {
+            logException(exception);
+            fallbackPath = assemblyPath;
+        }
+
         return new()
         {
             Success = true,
-            Message = $"Falling back to stale IL from {FormatFallbackAssemblyPath(project, assemblyPath)}.",
+            Message = $"Falling back to stale IL from {fallbackPath}.",
             EmitDiagnostics = emitDiagnostics,
             Methods = fallback.Methods,
         };
