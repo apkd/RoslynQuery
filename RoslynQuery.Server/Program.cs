@@ -14,6 +14,11 @@ var versionOption = new Option<bool>("--version")
     Description = "Print the RoslynQuery server version and exit.",
 };
 
+var updateOption = new Option<bool>("--update", "-U")
+{
+    Description = "Download the latest GitHub release executable and replace the current one.",
+};
+
 var benchmarkInitOption = new Option<string?>("--benchmark-init")
 {
     Description = "Load the target solution/project, wait for the source symbol index build, print timings, and exit.",
@@ -22,6 +27,7 @@ var benchmarkInitOption = new Option<string?>("--benchmark-init")
 var rootCommand = new RootCommand("RoslynQuery server")
 {
     benchmarkInitOption,
+    updateOption,
     versionOption,
 };
 
@@ -31,6 +37,21 @@ rootCommand.SetAction(async parseResult =>
         {
             Console.Out.WriteLine(RoslynServerMetadata.GetDisplayVersion());
             return 0;
+        }
+
+        if (parseResult.GetValue(updateOption))
+        {
+            try
+            {
+                var result = await SelfUpdater.UpdateAsync(CancellationToken.None);
+                Console.Out.WriteLine(result.Message);
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"Update failed: {exception.Message}");
+                return 1;
+            }
         }
 
         var benchmarkTarget = parseResult.GetValue(benchmarkInitOption);

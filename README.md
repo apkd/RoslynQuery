@@ -30,6 +30,12 @@ You can either:
 - Download the server executable from [the releases page](https://github.com/apkd/RoslynQuery/releases/tag/release), or...
 - Build it locally with `dotnet publish`.
 
+To update an installed release binary in place:
+
+```sh
+roslynquery -U
+```
+
 Now point your editor at the MCP executable:
 
 <details>

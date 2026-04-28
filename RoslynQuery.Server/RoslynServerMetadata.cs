@@ -11,4 +11,8 @@ static class RoslynServerMetadata
                .InformationalVersion
            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
            ?? "0.0.0";
+
+    public static string GetPackageVersion()
+        => Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+           ?? "0.0.0";
 }
