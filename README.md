@@ -11,6 +11,7 @@
                                         OoO'                                        OoO' 
 ```
 
+[![Version](https://img.shields.io/github/v/tag/apkd/RoslynQuery?filter=v%2A&sort=semver&style=flat&logo=modelcontextprotocol&label=Version&labelColor=2C3439&color=dd5522)](https://github.com/apkd/RoslynQuery/releases/latest)
 [![MIT License](https://img.shields.io/github/license/apkd/RoslynQuery?style=flat&label=License&logo=listmonk&labelColor=2C3439&color=fff)](https://github.com/apkd/RoslynQuery/blob/master/LICENSE)
 [![Test status badge](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml/badge.svg?branch=master&event=push)](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml)
 [![GitHub commit activity](https://img.shields.io/github/commit-activity/m/apkd/RoslynQuery?authorFilter=apkd&label=Commits&labelColor=2C3439&color=EBFF65&logo=git)](https://github.com/apkd/RoslynQuery/commits/master)
