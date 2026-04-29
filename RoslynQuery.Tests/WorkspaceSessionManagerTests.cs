@@ -16,6 +16,128 @@ public sealed class WorkspaceSessionManagerTests
     }
 
     [Test]
+    public async Task MsBuildSelectionPrefersVs2022ForLegacyProjects()
+    {
+        var projectPath = CreateTemporaryProject(LegacyProject);
+        try
+        {
+            var selected = MsBuildBootstrapper.SelectBestInstance(
+                [
+                    new("Visual Studio 2026", "18.4.0", @"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin", @"C:\Program Files\Microsoft Visual Studio\18\Community", "VisualStudioSetup"),
+                    new("Visual Studio 2022", "17.14.0", @"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin", @"C:\Program Files\Microsoft Visual Studio\2022\BuildTools", "VisualStudioSetup"),
+                    new(".NET SDK", "10.0.203", @"C:\Program Files\dotnet\sdk\10.0.203", "", "DotNetSdk"),
+                ],
+                projectPath,
+                "project"
+            );
+
+            await Assert.That(selected.MSBuildPath).Contains(@"Visual Studio\2022", OrdinalIgnoreCase);
+            await Assert.That(selected.IsKnownLegacyRisk).IsFalse();
+            await Assert.That(selected.SelectionReason).Contains("legacy", OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(projectPath)!, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task MsBuildSelectionAvoidsKnownRiskSdkForLegacyProjectsWhenOlderSdkExists()
+    {
+        var projectPath = CreateTemporaryProject(LegacyProject);
+        try
+        {
+            var selected = MsBuildBootstrapper.SelectBestInstance(
+                [
+                    new(".NET SDK 10", "10.0.203", @"C:\Program Files\dotnet\sdk\10.0.203", "", "DotNetSdk"),
+                    new(".NET SDK 9", "9.0.116", @"C:\Program Files\dotnet\sdk\9.0.116", "", "DotNetSdk"),
+                ],
+                projectPath,
+                "project"
+            );
+
+            await Assert.That(selected.MSBuildPath).Contains(@"sdk\9.0.116", OrdinalIgnoreCase);
+            await Assert.That(selected.IsKnownLegacyRisk).IsFalse();
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(projectPath)!, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task MsBuildSelectionDetectsLegacyProjectsInsideSolutions()
+    {
+        var projectPath = CreateTemporaryProject(LegacyProject);
+        var rootPath = Path.GetDirectoryName(projectPath)!;
+        var solutionPath = Path.Combine(rootPath, "Sample.sln");
+        File.WriteAllText(
+            solutionPath,
+            """
+            Microsoft Visual Studio Solution File, Format Version 12.00
+            Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sample", "Sample.csproj", "{11111111-1111-1111-1111-111111111111}"
+            EndProject
+            Global
+            EndGlobal
+            """
+        );
+
+        try
+        {
+            var selected = MsBuildBootstrapper.SelectBestInstance(
+                [
+                    new("Visual Studio 2026", "18.4.0", @"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin", @"C:\Program Files\Microsoft Visual Studio\18\Community", "VisualStudioSetup"),
+                    new("Visual Studio 2022", "17.14.0", @"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin", @"C:\Program Files\Microsoft Visual Studio\2022\BuildTools", "VisualStudioSetup"),
+                ],
+                solutionPath,
+                "solution"
+            );
+
+            await Assert.That(selected.MSBuildPath).Contains(@"Visual Studio\2022", OrdinalIgnoreCase);
+            await Assert.That(selected.SelectionReason).Contains("legacy", OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task MsBuildSelectionHonorsGlobalJsonForSdkStyleProjects()
+    {
+        var projectPath = CreateTemporaryProject(SdkStyleProject);
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(Path.GetDirectoryName(projectPath)!, "global.json"),
+                """
+                {
+                  "sdk": {
+                    "version": "10.0.203"
+                  }
+                }
+                """
+            );
+
+            var selected = MsBuildBootstrapper.SelectBestInstance(
+                [
+                    new(".NET SDK 9", "9.0.116", @"C:\Program Files\dotnet\sdk\9.0.116", "", "DotNetSdk"),
+                    new(".NET SDK 10", "10.0.203", @"C:\Program Files\dotnet\sdk\10.0.203", "", "DotNetSdk"),
+                ],
+                projectPath,
+                "project"
+            );
+
+            await Assert.That(selected.MSBuildPath).Contains(@"sdk\10.0.203", OrdinalIgnoreCase);
+            await Assert.That(selected.SelectionReason).Contains("global.json", OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(projectPath)!, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task LoadWorkspaceDirectoryLoadsSolutionAndStatusReturnsProjectAndDiagnosticCounts()
     {
         await using var fixture = FixtureWorkspace.Create();
@@ -457,6 +579,32 @@ public sealed class WorkspaceSessionManagerTests
         var drive = char.ToLowerInvariant(windowsPath[0]);
         return $"/mnt/{drive}/{windowsPath[3..].Replace('\\', '/')}";
     }
+
+    static string CreateTemporaryProject(string content)
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "RoslynQuery", Guid.NewGuid().ToString("N"));
+        var projectPath = Path.Combine(rootPath, "Sample.csproj");
+        Directory.CreateDirectory(rootPath);
+        File.WriteAllText(projectPath, content);
+        return projectPath;
+    }
+
+    const string LegacyProject = """
+                                 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                                   <PropertyGroup>
+                                     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+                                   </PropertyGroup>
+                                   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+                                 </Project>
+                                 """;
+
+    const string SdkStyleProject = """
+                                   <Project Sdk="Microsoft.NET.Sdk">
+                                     <PropertyGroup>
+                                       <TargetFramework>net10.0</TargetFramework>
+                                     </PropertyGroup>
+                                   </Project>
+                                   """;
 
     const string ClassicSolution = """
                                    Microsoft Visual Studio Solution File, Format Version 12.00

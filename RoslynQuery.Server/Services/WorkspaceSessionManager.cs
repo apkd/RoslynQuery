@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Text;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -436,7 +438,7 @@ public sealed class WorkspaceSessionManager
 
     async Task<WorkspaceSession> LoadSessionAsync(string path, string targetKind, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
-        MsBuildBootstrapper.EnsureRegistered();
+        MsBuildBootstrapper.EnsureRegistered(path, targetKind);
 
         var workspace = MSBuildWorkspace.Create();
         workspace.LoadMetadataForReferencedProjects = true;
@@ -613,9 +615,111 @@ public sealed class WorkspaceSessionManager
     }
 
     static string FormatWorkspaceLoadError(Exception exception)
-        => exception.ToString().Contains("BuildHost-net472", StringComparison.OrdinalIgnoreCase)
-            ? "Legacy .NET Framework project loading failed because the bundled BuildHost-net472 files were unavailable."
-            : exception.Message;
+    {
+        if (!LooksLikeMsBuildCompatibilityFailure(exception))
+            return exception.Message;
+
+        var builder = new StringBuilder();
+        builder.Append(exception.Message);
+
+        var instance = MsBuildBootstrapper.RegisteredInstance;
+        if (!instance.IsEmpty)
+        {
+            builder.AppendLine();
+            builder.AppendLine();
+            builder.Append("MSBuild: ");
+            builder.Append(string.IsNullOrWhiteSpace(instance.Name) ? "selected instance" : instance.Name);
+
+            if (!string.IsNullOrWhiteSpace(instance.Version))
+            {
+                builder.Append(" ");
+                builder.Append(instance.Version);
+            }
+
+            if (!string.IsNullOrWhiteSpace(instance.MSBuildPath))
+            {
+                builder.AppendLine();
+                builder.Append("MSBuild path: ");
+                builder.Append(instance.MSBuildPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(instance.SelectionReason))
+            {
+                builder.AppendLine();
+                builder.Append("Selection: ");
+                builder.Append(instance.SelectionReason);
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine();
+        builder.Append("This failure usually means Roslyn's MSBuild build host loaded an incompatible MSBuild/runtime assembly set. ");
+        builder.Append("It is common with legacy .NET Framework or Unity-style projects when .NET SDK 10.0.200+ / MSBuild 18.x or VS 2026 is selected.");
+
+        if (instance.IsKnownLegacyRisk)
+        {
+            builder.AppendLine();
+            builder.Append("The selected MSBuild instance is a known risk for that project shape. ");
+        }
+        else
+        {
+            builder.AppendLine();
+        }
+
+        builder.Append("Install or select a compatible MSBuild, such as VS 2022 Build Tools / MSBuild 17.x, or set ");
+        builder.Append(MsBuildBootstrapper.MSBuildPathOverrideEnvironmentVariable);
+        builder.Append(" to the desired MSBuild directory.");
+
+        builder.AppendLine();
+        builder.AppendLine();
+        builder.Append("Exception chain:");
+        AppendExceptionChain(builder, exception);
+        return builder.ToString();
+    }
+
+    static bool LooksLikeMsBuildCompatibilityFailure(Exception exception)
+    {
+        var text = exception.ToString();
+        return text.Contains("Microsoft.Build.Shared.XMakeElements", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("BuildHost-net472", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("System.Collections.Frozen", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("System.Collections.Immutable", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("RemoteBuildHost", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("BuildHost process", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void AppendExceptionChain(StringBuilder builder, Exception exception)
+    {
+        var current = exception;
+        for (var depth = 0; current is not null && depth < 8; depth++)
+        {
+            builder.AppendLine();
+            builder.Append("- ");
+            builder.Append(current.GetType().FullName);
+            if (!string.IsNullOrWhiteSpace(current.Message))
+            {
+                builder.Append(": ");
+                builder.Append(current.Message);
+            }
+
+            if (current is ReflectionTypeLoadException reflectionTypeLoadException)
+            {
+                foreach (var loaderException in reflectionTypeLoadException.LoaderExceptions)
+                {
+                    if (loaderException is null)
+                        continue;
+
+                    builder.AppendLine();
+                    builder.Append("  - ");
+                    builder.Append(loaderException.GetType().FullName);
+                    builder.Append(": ");
+                    builder.Append(loaderException.Message);
+                }
+            }
+
+            current = current.InnerException;
+        }
+    }
 
     static DiagnosticInfo[] FilterDiagnostics(DiagnosticInfo[] diagnostics, string verbosity)
         => verbosity switch
