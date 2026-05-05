@@ -87,15 +87,17 @@ static class LegacyDesignTimeWorkspaceLoader
         var projectDirectory = Path.GetDirectoryName(project.Path)
                                ?? throw new InvalidOperationException($"Project '{project.Path}' does not have a directory.");
 
-        var properties = CreateGlobalProperties(solutionPath);
-        var projectCollection = new ProjectCollection(
-            properties,
-            loggers: [],
-            ToolsetDefinitionLocations.Default
-        );
-
+        buildGate.Wait(ct);
+        ProjectCollection? projectCollection = null;
         try
         {
+            var properties = CreateGlobalProperties(solutionPath);
+            projectCollection = new ProjectCollection(
+                properties,
+                loggers: [],
+                ToolsetDefinitionLocations.Default
+            );
+
             var loadSettings = ProjectLoadSettings.IgnoreMissingImports
                                | ProjectLoadSettings.RejectCircularImports
                                | ProjectLoadSettings.IgnoreEmptyImports
@@ -116,18 +118,10 @@ static class LegacyDesignTimeWorkspaceLoader
                 LogTaskInputs = false,
             };
 
-            buildGate.Wait(ct);
-            try
-            {
-                ct.ThrowIfCancellationRequested();
-                var result = BuildManager.DefaultBuildManager.Build(parameters, request);
-                if (result.OverallResult == BuildResultCode.Failure)
-                    throw CreateBuildFailure(project.Path, logger, result.Exception);
-            }
-            finally
-            {
-                buildGate.Release();
-            }
+            ct.ThrowIfCancellationRequested();
+            var result = BuildManager.DefaultBuildManager.Build(parameters, request);
+            if (result.OverallResult == BuildResultCode.Failure)
+                throw CreateBuildFailure(project.Path, logger, result.Exception);
 
             var commandLineArgs = ReadCommandLineArgs(projectInstance);
 
@@ -143,8 +137,10 @@ static class LegacyDesignTimeWorkspaceLoader
         }
         finally
         {
-            projectCollection.UnloadAllProjects();
-            projectCollection.Dispose();
+            projectCollection?.UnloadAllProjects();
+            projectCollection?.Dispose();
+            BuildManager.DefaultBuildManager.ResetCaches();
+            buildGate.Release();
         }
     }
 

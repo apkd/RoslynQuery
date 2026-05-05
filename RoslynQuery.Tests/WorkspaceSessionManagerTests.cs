@@ -189,7 +189,7 @@ public sealed class WorkspaceSessionManagerTests
         }
         finally
         {
-            Directory.Delete(fixture.RootPath, recursive: true);
+            DeleteDirectory(fixture.RootPath);
         }
     }
 
@@ -218,7 +218,7 @@ public sealed class WorkspaceSessionManagerTests
         }
         finally
         {
-            Directory.Delete(fixture.RootPath, recursive: true);
+            DeleteDirectory(fixture.RootPath);
         }
     }
 
@@ -245,7 +245,7 @@ public sealed class WorkspaceSessionManagerTests
         }
         finally
         {
-            Directory.Delete(fixture.RootPath, recursive: true);
+            DeleteDirectory(fixture.RootPath);
         }
     }
 
@@ -277,7 +277,7 @@ public sealed class WorkspaceSessionManagerTests
         }
         finally
         {
-            Directory.Delete(rootPath, recursive: true);
+            DeleteDirectory(rootPath);
         }
     }
 
@@ -920,6 +920,31 @@ public sealed class WorkspaceSessionManagerTests
             .Replace("\"", "&quot;", Ordinal)
             .Replace("<", "&lt;", Ordinal)
             .Replace(">", "&gt;", Ordinal);
+
+    static void DeleteDirectory(string path)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                    Directory.Delete(path, recursive: true);
+
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 4)
+            {
+                Thread.Sleep(50);
+            }
+        }
+
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
+    }
 
     readonly record struct LegacyDesignTimeFixture(string RootPath, string SolutionPath, string ConsumerPath);
 

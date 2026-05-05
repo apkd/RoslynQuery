@@ -34,6 +34,8 @@ public sealed class WorkspaceSessionManager
         "overridden_members",
     ];
 
+    static readonly SemaphoreSlim workspaceLoadGate = new(1, 1);
+
     readonly SemaphoreSlim gate = new(1, 1);
     readonly ILogger<WorkspaceSessionManager> log;
     WorkspaceSession? activeSession;
@@ -439,51 +441,64 @@ public sealed class WorkspaceSessionManager
     async Task<WorkspaceSession> LoadSessionAsync(string path, string targetKind, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
         using var loadTarget = WorkspaceProjectFilter.Create(path, targetKind);
-        MsBuildBootstrapper.EnsureRegistered(loadTarget.LoadPath, targetKind);
+        await workspaceLoadGate.WaitAsync(ct);
 
-        var messages = new WorkspaceMessageBuffer();
-
-        var startedAtUtc = DateTimeOffset.UtcNow;
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-        Workspace workspace;
-        Solution solution;
-        if (WorkspaceProjectDiscovery.ContainsLegacyCSharpProject(loadTarget.LoadPath, targetKind))
+        Workspace? workspace = null;
+        try
         {
-            var result = await LegacyDesignTimeWorkspaceLoader.LoadAsync(targetKind, loadTarget, ct);
-            workspace = result.Workspace;
-            solution = result.Solution;
-        }
-        else
-        {
-            var msbuildWorkspace = MSBuildWorkspace.Create();
-            msbuildWorkspace.LoadMetadataForReferencedProjects = true;
+            MsBuildBootstrapper.EnsureRegistered(loadTarget.LoadPath, targetKind);
+
+            var messages = new WorkspaceMessageBuffer();
+
+            var startedAtUtc = DateTimeOffset.UtcNow;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            Solution solution;
+            if (WorkspaceProjectDiscovery.ContainsLegacyCSharpProject(loadTarget.LoadPath, targetKind))
+            {
+                var result = await LegacyDesignTimeWorkspaceLoader.LoadAsync(targetKind, loadTarget, ct);
+                workspace = result.Workspace;
+                solution = result.Solution;
+            }
+            else
+            {
+                var msbuildWorkspace = MSBuildWorkspace.Create();
+                msbuildWorkspace.LoadMetadataForReferencedProjects = true;
 #pragma warning disable CS0618
-            msbuildWorkspace.WorkspaceFailed += (_, args) => messages.Add(args.Diagnostic);
+                msbuildWorkspace.WorkspaceFailed += (_, args) => messages.Add(args.Diagnostic);
 #pragma warning restore CS0618
 
-            workspace = msbuildWorkspace;
-            if (string.Equals(targetKind, "project", StringComparison.Ordinal))
-                solution = (await msbuildWorkspace.OpenProjectAsync(path, cancellationToken: ct)).Solution;
-            else
-                solution = await msbuildWorkspace.OpenSolutionAsync(loadTarget.LoadPath, cancellationToken: ct);
+                workspace = msbuildWorkspace;
+                if (string.Equals(targetKind, "project", StringComparison.Ordinal))
+                    solution = (await msbuildWorkspace.OpenProjectAsync(path, cancellationToken: ct)).Solution;
+                else
+                    solution = await msbuildWorkspace.OpenSolutionAsync(loadTarget.LoadPath, cancellationToken: ct);
+            }
+
+            solution = loadTarget.ApplyFilter(solution);
+
+            stopwatch.Stop();
+
+            var session = new WorkspaceSession(
+                workspace,
+                solution,
+                path,
+                targetKind,
+                pathStyle,
+                startedAtUtc,
+                stopwatch.Elapsed,
+                loadTarget.ExcludedProjectCount,
+                messages
+            );
+
+            workspace = null;
+            return session;
         }
-
-        solution = loadTarget.ApplyFilter(solution);
-
-        stopwatch.Stop();
-
-        return new(
-            workspace,
-            solution,
-            path,
-            targetKind,
-            pathStyle,
-            startedAtUtc,
-            stopwatch.Elapsed,
-            loadTarget.ExcludedProjectCount,
-            messages
-        );
+        finally
+        {
+            workspace?.Dispose();
+            workspaceLoadGate.Release();
+        }
     }
 
     static async Task<WorkspaceStatusResponse> BuildStatusAsync(
