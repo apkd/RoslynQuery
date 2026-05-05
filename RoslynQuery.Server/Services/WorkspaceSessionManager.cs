@@ -438,25 +438,36 @@ public sealed class WorkspaceSessionManager
 
     async Task<WorkspaceSession> LoadSessionAsync(string path, string targetKind, WorkspacePathStyle pathStyle, CancellationToken ct)
     {
-        MsBuildBootstrapper.EnsureRegistered(path, targetKind);
+        using var loadTarget = WorkspaceProjectFilter.Create(path, targetKind);
+        MsBuildBootstrapper.EnsureRegistered(loadTarget.LoadPath, targetKind);
 
-        var workspace = MSBuildWorkspace.Create();
-        workspace.LoadMetadataForReferencedProjects = true;
         var messages = new WorkspaceMessageBuffer();
-#pragma warning disable CS0618
-        workspace.WorkspaceFailed += (_, args) => messages.Add(args.Diagnostic);
-#pragma warning restore CS0618
 
         var startedAtUtc = DateTimeOffset.UtcNow;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        using var loadTarget = WorkspaceProjectFilter.Create(path, targetKind);
-
+        Workspace workspace;
         Solution solution;
-        if (string.Equals(targetKind, "project", StringComparison.Ordinal))
-            solution = (await workspace.OpenProjectAsync(path, cancellationToken: ct)).Solution;
+        if (WorkspaceProjectDiscovery.ContainsLegacyCSharpProject(loadTarget.LoadPath, targetKind))
+        {
+            var result = await LegacyDesignTimeWorkspaceLoader.LoadAsync(targetKind, loadTarget, ct);
+            workspace = result.Workspace;
+            solution = result.Solution;
+        }
         else
-            solution = await workspace.OpenSolutionAsync(loadTarget.LoadPath, cancellationToken: ct);
+        {
+            var msbuildWorkspace = MSBuildWorkspace.Create();
+            msbuildWorkspace.LoadMetadataForReferencedProjects = true;
+#pragma warning disable CS0618
+            msbuildWorkspace.WorkspaceFailed += (_, args) => messages.Add(args.Diagnostic);
+#pragma warning restore CS0618
+
+            workspace = msbuildWorkspace;
+            if (string.Equals(targetKind, "project", StringComparison.Ordinal))
+                solution = (await msbuildWorkspace.OpenProjectAsync(path, cancellationToken: ct)).Solution;
+            else
+                solution = await msbuildWorkspace.OpenSolutionAsync(loadTarget.LoadPath, cancellationToken: ct);
+        }
 
         solution = loadTarget.ApplyFilter(solution);
 
@@ -1382,7 +1393,7 @@ public sealed class WorkspaceSessionManager
 readonly record struct RelatedSymbolKey(string Relation, string CanonicalSignature);
 
 sealed class WorkspaceSession(
-    MSBuildWorkspace workspace,
+    Workspace workspace,
     Solution solution,
     string targetPath,
     string targetKind,
@@ -1399,7 +1410,7 @@ sealed class WorkspaceSession(
     Task<DiagnosticInfo[]>? diagnosticsTask;
     Task<WorkspaceSymbolIndex>? indexTask;
 
-    public MSBuildWorkspace Workspace { get; } = workspace;
+    public Workspace Workspace { get; } = workspace;
 
     public Solution Solution { get; } = solution;
 

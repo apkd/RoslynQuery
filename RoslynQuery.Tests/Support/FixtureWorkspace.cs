@@ -317,7 +317,7 @@ sealed class FixtureWorkspace : IAsyncDisposable
         throw new InvalidOperationException($"Failed to emit fixture metadata assembly:{Environment.NewLine}{diagnostics}");
     }
 
-    static string[] GetReferenceAssemblyPaths()
+    internal static string[] GetReferenceAssemblyPaths()
     {
         var runtimeDirectory = RuntimeEnvironment.GetRuntimeDirectory();
         var dotnetRoot = Directory.GetParent(runtimeDirectory)?.Parent?.Parent?.Parent?.FullName

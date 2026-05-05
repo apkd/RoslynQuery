@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using static System.StringComparison;
 
@@ -134,6 +135,149 @@ public sealed class WorkspaceSessionManagerTests
         finally
         {
             Directory.Delete(Path.GetDirectoryName(projectPath)!, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task WorkspaceProjectDiscoveryDetectsLegacyProjectsInsideSolutions()
+    {
+        var projectPath = CreateTemporaryProject(LegacyProject);
+        var rootPath = Path.GetDirectoryName(projectPath)!;
+        var solutionPath = Path.Combine(rootPath, "Sample.slnx");
+        File.WriteAllText(
+            solutionPath,
+            """
+            <Solution>
+              <Project Path="Sample.csproj" />
+            </Solution>
+            """
+        );
+
+        try
+        {
+            await Assert.That(WorkspaceProjectDiscovery.IsLegacyCSharpProject(projectPath)).IsTrue();
+            await Assert.That(WorkspaceProjectDiscovery.ContainsLegacyCSharpProject(solutionPath, "solution")).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task LegacyDesignTimeLoaderLoadsOldStyleProjectsWithoutBuildHost()
+    {
+        var fixture = CreateLegacyDesignTimeWorkspace();
+        try
+        {
+            var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+            var opened = await manager.LoadAsync(fixture.SolutionPath, CancellationToken.None);
+            var status = await manager.StatusAsync(CancellationToken.None);
+            var type = await manager.DescribeSymbolAsync("LegacyDog", CancellationToken.None);
+            var usage = await manager.FindUsagesAsync("LegacyDog.Speak", CancellationToken.None);
+
+            await Assert.That(opened.Success).IsTrue();
+            await Assert.That(opened.Status.Messages).IsEmpty();
+            await Assert.That(status.ProjectCount).IsEqualTo(2);
+            await Assert.That(status.ErrorCount).IsEqualTo(0);
+            await Assert.That(type.Success).IsTrue();
+            await Assert.That(type.Symbol?.Kind).IsEqualTo("class");
+            await Assert.That(type.Symbol?.CanonicalSignature).IsEqualTo("Legacy.Core::Legacy.Core.LegacyDog");
+            await Assert.That(usage.Success).IsTrue();
+            await Assert.That(usage.References).Contains(reference => string.Equals(reference.DocumentPath, fixture.ConsumerPath, OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.Delete(fixture.RootPath, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task LegacyDesignTimeLoaderLoadsProjectReferenceClosureForProjectTargets()
+    {
+        var fixture = CreateLegacyDesignTimeWorkspace();
+        var projectPath = Path.Combine(fixture.RootPath, "Legacy.App", "Legacy.App.csproj");
+        try
+        {
+            var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+            var opened = await manager.LoadAsync(projectPath, CancellationToken.None);
+            var status = await manager.StatusAsync(CancellationToken.None);
+            var consumer = await manager.DescribeSymbolAsync("Consumer", CancellationToken.None);
+            var type = await manager.DescribeSymbolAsync("LegacyDog", CancellationToken.None);
+
+            await Assert.That(opened.Success).IsTrue();
+            await Assert.That(opened.Status.Messages).IsEmpty();
+            await Assert.That(status.ProjectCount).IsEqualTo(2);
+            await Assert.That(status.ErrorCount).IsEqualTo(0);
+            await Assert.That(consumer.Success).IsTrue();
+            await Assert.That(consumer.Symbol?.CanonicalSignature).IsEqualTo("Legacy.App::Legacy.App.Consumer");
+            await Assert.That(type.Success).IsTrue();
+            await Assert.That(type.Symbol?.CanonicalSignature).IsEqualTo("Legacy.Core::Legacy.Core.LegacyDog");
+        }
+        finally
+        {
+            Directory.Delete(fixture.RootPath, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task HybridLoaderLoadsLegacyAndSdkStyleProjectsInSameSolution()
+    {
+        var fixture = CreateHybridDesignTimeWorkspace();
+        try
+        {
+            var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+            var opened = await manager.LoadAsync(fixture.SolutionPath, CancellationToken.None);
+            var status = await manager.StatusAsync(CancellationToken.None);
+            var consumer = await manager.DescribeSymbolAsync("SdkConsumer", CancellationToken.None);
+            var usage = await manager.FindUsagesAsync("LegacyDog.Speak", CancellationToken.None);
+
+            await Assert.That(opened.Success).IsTrue();
+            await Assert.That(status.ProjectCount).IsEqualTo(2);
+            await Assert.That(status.ErrorCount).IsEqualTo(0);
+            await Assert.That(consumer.Success).IsTrue();
+            await Assert.That(consumer.Symbol?.CanonicalSignature).IsEqualTo("Sdk.App::Sdk.App.SdkConsumer");
+            await Assert.That(usage.Success).IsTrue();
+            await Assert.That(usage.References).Contains(reference => string.Equals(reference.DocumentPath, fixture.ConsumerPath, OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Directory.Delete(fixture.RootPath, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task LegacyDesignTimeLoaderFailsWhenCompilerArgumentsAreUnavailable()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "RoslynQuery", Guid.NewGuid().ToString("N"));
+        var projectPath = Path.Combine(rootPath, "Broken.csproj");
+        Directory.CreateDirectory(rootPath);
+        File.WriteAllText(
+            projectPath,
+            """
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Target Name="Compile" />
+              <Target Name="CoreCompile" />
+            </Project>
+            """
+        );
+
+        try
+        {
+            var manager = new WorkspaceSessionManager(NullLogger<WorkspaceSessionManager>.Instance);
+
+            var opened = await manager.LoadAsync(projectPath, CancellationToken.None);
+
+            await Assert.That(opened.Success).IsFalse();
+            await Assert.That(opened.Error).Contains("did not produce CscCommandLineArgs", Ordinal);
+            await Assert.That(opened.Error).DoesNotContain("BuildHost", Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(rootPath, recursive: true);
         }
     }
 
@@ -588,6 +732,196 @@ public sealed class WorkspaceSessionManagerTests
         File.WriteAllText(projectPath, content);
         return projectPath;
     }
+
+    static LegacyDesignTimeFixture CreateLegacyDesignTimeWorkspace()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "RoslynQuery", Guid.NewGuid().ToString("N"));
+        var coreDirectory = Path.Combine(rootPath, "Legacy.Core");
+        var appDirectory = Path.Combine(rootPath, "Legacy.App");
+        var solutionPath = Path.Combine(rootPath, "Legacy.slnx");
+        var coreProjectPath = Path.Combine(coreDirectory, "Legacy.Core.csproj");
+        var appProjectPath = Path.Combine(appDirectory, "Legacy.App.csproj");
+        var consumerPath = Path.Combine(appDirectory, "Consumer.cs");
+
+        Directory.CreateDirectory(coreDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        File.WriteAllText(
+            solutionPath,
+            """
+            <Solution>
+              <Project Path="Legacy.Core/Legacy.Core.csproj" />
+              <Project Path="Legacy.App/Legacy.App.csproj" />
+            </Solution>
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(
+            Path.Combine(coreDirectory, "LegacyDog.cs"),
+            """
+            namespace Legacy.Core;
+
+            #if LEGACY_SYMBOL
+            public unsafe sealed class LegacyDog
+            {
+                public int* Pointer;
+
+                public string Speak() => nameof(LegacyDog);
+            }
+            #endif
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(
+            consumerPath,
+            """
+            using Legacy.Core;
+
+            namespace Legacy.App;
+
+            public sealed class Consumer
+            {
+                public string Run() => new LegacyDog().Speak();
+            }
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(coreProjectPath, CreateLegacyDesignTimeProjectXml("Legacy.Core", includeProjectReference: false), Encoding.UTF8);
+        File.WriteAllText(appProjectPath, CreateLegacyDesignTimeProjectXml("Legacy.App", includeProjectReference: true), Encoding.UTF8);
+
+        return new(rootPath, solutionPath, consumerPath);
+    }
+
+    static LegacyDesignTimeFixture CreateHybridDesignTimeWorkspace()
+    {
+        var rootPath = Path.Combine(Path.GetTempPath(), "RoslynQuery", Guid.NewGuid().ToString("N"));
+        var coreDirectory = Path.Combine(rootPath, "Legacy.Core");
+        var appDirectory = Path.Combine(rootPath, "Sdk.App");
+        var solutionPath = Path.Combine(rootPath, "Hybrid.slnx");
+        var coreProjectPath = Path.Combine(coreDirectory, "Legacy.Core.csproj");
+        var appProjectPath = Path.Combine(appDirectory, "Sdk.App.csproj");
+        var consumerPath = Path.Combine(appDirectory, "SdkConsumer.cs");
+
+        Directory.CreateDirectory(coreDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        File.WriteAllText(
+            solutionPath,
+            """
+            <Solution>
+              <Project Path="Legacy.Core/Legacy.Core.csproj" />
+              <Project Path="Sdk.App/Sdk.App.csproj" />
+            </Solution>
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(
+            Path.Combine(coreDirectory, "LegacyDog.cs"),
+            """
+            namespace Legacy.Core;
+
+            #if LEGACY_SYMBOL
+            public unsafe sealed class LegacyDog
+            {
+                public int* Pointer;
+
+                public string Speak() => nameof(LegacyDog);
+            }
+            #endif
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(
+            consumerPath,
+            """
+            using Legacy.Core;
+
+            namespace Sdk.App;
+
+            public sealed class SdkConsumer
+            {
+                public string Run() => new LegacyDog().Speak();
+            }
+            """,
+            Encoding.UTF8
+        );
+
+        File.WriteAllText(coreProjectPath, CreateLegacyDesignTimeProjectXml("Legacy.Core", includeProjectReference: false), Encoding.UTF8);
+        File.WriteAllText(
+            appProjectPath,
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="..\Legacy.Core\Legacy.Core.csproj" />
+              </ItemGroup>
+            </Project>
+            """,
+            Encoding.UTF8
+        );
+
+        return new(rootPath, solutionPath, consumerPath);
+    }
+
+    static string CreateLegacyDesignTimeProjectXml(string assemblyName, bool includeProjectReference)
+    {
+        var references = string.Join(
+            Environment.NewLine,
+            FixtureWorkspace.GetReferenceAssemblyPaths().Select(path => $"""    <NetCoreReference Include="{EscapeXml(path)}" />""")
+        );
+
+        var projectReference = includeProjectReference
+            ? """    <ProjectReference Include="..\Legacy.Core\Legacy.Core.csproj" />"""
+            : "";
+        var projectReferenceCommandLineArg = includeProjectReference
+            ? """      <CscCommandLineArgs Include="/reference:$(MSBuildProjectDirectory)\..\Legacy.Core\bin\Debug\Legacy.Core.dll" />"""
+            : "";
+
+        return $$"""
+                 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                   <PropertyGroup>
+                     <AssemblyName>{{assemblyName}}</AssemblyName>
+                     <TargetPath>$(MSBuildProjectDirectory)\bin\Debug\{{assemblyName}}.dll</TargetPath>
+                   </PropertyGroup>
+                   <ItemGroup>
+                     <Compile Include="*.cs" />
+                 {{references}}
+                 {{projectReference}}
+                   </ItemGroup>
+                   <Target Name="Compile" />
+                   <Target Name="CoreCompile">
+                     <ItemGroup>
+                       <CscCommandLineArgs Include="/target:library" />
+                       <CscCommandLineArgs Include="/out:$(TargetPath)" />
+                       <CscCommandLineArgs Include="/unsafe+" />
+                       <CscCommandLineArgs Include="/langversion:preview" />
+                       <CscCommandLineArgs Include="/define:LEGACY_SYMBOL" />
+                       <CscCommandLineArgs Include="@(NetCoreReference->'/reference:%(FullPath)')" />
+                 {{projectReferenceCommandLineArg}}
+                       <CscCommandLineArgs Include="@(Compile->'%(FullPath)')" />
+                     </ItemGroup>
+                   </Target>
+                 </Project>
+                 """;
+    }
+
+    static string EscapeXml(string value)
+        => value
+            .Replace("&", "&amp;", Ordinal)
+            .Replace("\"", "&quot;", Ordinal)
+            .Replace("<", "&lt;", Ordinal)
+            .Replace(">", "&gt;", Ordinal);
+
+    readonly record struct LegacyDesignTimeFixture(string RootPath, string SolutionPath, string ConsumerPath);
 
     const string LegacyProject = """
                                  <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
