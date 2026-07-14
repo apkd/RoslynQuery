@@ -14,8 +14,16 @@
 [![Version](https://img.shields.io/github/v/tag/apkd/RoslynQuery?filter=v%2A&sort=semver&style=flat&logo=modelcontextprotocol&label=Version&labelColor=2C3439&color=dd5522)](https://github.com/apkd/RoslynQuery/releases/latest)
 [![MIT License](https://img.shields.io/github/license/apkd/RoslynQuery?style=flat&label=License&logo=listmonk&labelColor=2C3439&color=fff)](https://github.com/apkd/RoslynQuery/blob/master/LICENSE)
 [![Test status badge](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml/badge.svg?branch=master&event=push)](https://github.com/apkd/RoslynQuery/actions/workflows/build-test-release.yml)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/apkd/RoslynQuery?authorFilter=apkd&label=Commits&labelColor=2C3439&color=EBFF65&logo=git)](https://github.com/apkd/RoslynQuery/commits/master)
 [![GitHub last commit](https://img.shields.io/github/last-commit/apkd/RoslynQuery?labelColor=2C3439&color=f97&logoColor=f96&logo=tinder&label=Last%20commit)](https://github.com/apkd/RoslynQuery/commit/HEAD~1)
+
+---
+
+> [!CAUTION]
+>Project archived.
+>
+>Learnings: running a full Roslyn instance is rather slow and takes up a lot of RAM. In practice, the tradeoff wasn't worth it often. Querying the codebase using `ripgrep` and at runtime >using reflection APIs seems like a better, more lightweight choice.
+
+---
 
 A local MCP server that exposes IDE-like semantic queries over a C# workspace.
 
